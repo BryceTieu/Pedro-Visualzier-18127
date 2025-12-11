@@ -1679,7 +1679,7 @@ $: canRedo = redoStack.length > 0;
         class="w-full h-full rounded-lg shadow-md bg-neutral-50 dark:bg-neutral-900 relative overflow-visible"
       >
         <img
-          src="/fields/decode.webp"
+          src="/Pedro-Visualzier-18127/fields/decode.webp"
           alt="Field"
           class="absolute top-0 left-0 w-full h-full rounded-lg z-10 pointer-events-none"
         />
