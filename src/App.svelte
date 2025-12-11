@@ -761,6 +761,34 @@ let activePathIndex: number = 0;
               line.id = `origin-to-corner-${idx}`;
               two.add(line);
             });
+
+            // Draw facing direction arrow (0° is right, 180° is left)
+            const arrowLength = x(robotWidth * 0.9);
+            const arrowAngleRad = (robotHeading * Math.PI) / 180;
+            const arrowEndX = robotXY.x + Math.cos(arrowAngleRad) * arrowLength;
+            const arrowEndY = robotXY.y + Math.sin(arrowAngleRad) * arrowLength;
+            const arrow = new Two.Line(robotXY.x, robotXY.y, arrowEndX, arrowEndY);
+            arrow.stroke = '#ff6600';
+            arrow.linewidth = x(0.22);
+            arrow.id = 'robot-facing-arrow';
+            two.add(arrow);
+            // Arrowhead
+            const headLength = x(1.2);
+            const headAngle = Math.PI / 7;
+            const leftHeadX = arrowEndX - headLength * Math.cos(arrowAngleRad - headAngle);
+            const leftHeadY = arrowEndY - headLength * Math.sin(arrowAngleRad - headAngle);
+            const rightHeadX = arrowEndX - headLength * Math.cos(arrowAngleRad + headAngle);
+            const rightHeadY = arrowEndY - headLength * Math.sin(arrowAngleRad + headAngle);
+            const arrowHeadLeft = new Two.Line(arrowEndX, arrowEndY, leftHeadX, leftHeadY);
+            arrowHeadLeft.stroke = '#ff6600';
+            arrowHeadLeft.linewidth = x(0.18);
+            arrowHeadLeft.id = 'robot-facing-arrowhead-left';
+            two.add(arrowHeadLeft);
+            const arrowHeadRight = new Two.Line(arrowEndX, arrowEndY, rightHeadX, rightHeadY);
+            arrowHeadRight.stroke = '#ff6600';
+            arrowHeadRight.linewidth = x(0.18);
+            arrowHeadRight.id = 'robot-facing-arrowhead-right';
+            two.add(arrowHeadRight);
             // Draw lines between corners to form the collider
             for (let i = 0; i < cornersInches.length; i++) {
               const a = cornersInches[i];
