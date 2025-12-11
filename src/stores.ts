@@ -1,4 +1,6 @@
 import { writable } from "svelte/store";
+export const showAllCollisions = writable(false);
+export const colliderTrailColorMode = writable<'same' | 'different'>('different');
 
 function createDarkModeStore() {
   const { set, subscribe, update } = writable<"light" | "dark">("dark");
@@ -26,3 +28,9 @@ export const clickToPlaceMode = writable(false);
 export const centerLineWarningEnabled = writable(true);
 export const showCollisionPath = writable(false);
 export const collisionNextSegmentOnly = writable(false);
+
+// Collision sample rate (number of samples per segment)
+// Collision sampling - fixed in code for now
+
+// Show small corner dots for debugging miscalculations
+export const showCornerDots = writable(true);

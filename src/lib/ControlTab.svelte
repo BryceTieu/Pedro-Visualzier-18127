@@ -1,6 +1,16 @@
 <script lang="ts">
+    function makeTangentialPoint(x: number, y: number, reverse: boolean = false): Point {
+      return {
+        x,
+        y,
+        heading: "tangential",
+        reverse,
+      };
+    }
+  // Collision settings have been moved to Navbar.svelte
   import _ from "lodash";
   import { getRandomColor } from "../utils";
+  // ...existing code...
 
   export let percent: number;
   export let playing: boolean;
@@ -13,7 +23,6 @@
   export let robotXY: BasePoint;
   export let robotHeading: number;
   export let playbackSpeed: number = 1;
-  export let fpa: (l: FPALine, s: FPASettings) => Promise<Line>;
   export let x: d3.ScaleLinear<number, number, number>;
   export let y: d3.ScaleLinear<number, number, number>;
   export let settings: FPASettings;
@@ -59,6 +68,7 @@
           step="1"
         />
       </div>
+        <!-- Collision settings moved to Navbar.svelte -->
       <div class="text-xs text-neutral-500 dark:text-neutral-400">Size must be between 12" and 18"</div>
     </div>
 
@@ -161,12 +171,7 @@
                 
                 const newLine = {
                   name: `Path ${idx + 2}`,
-                  endPoint: {
-                    x: newEndX,
-                    y: newEndY,
-                    heading: "tangential",
-                    reverse: false,
-                  },
+                  endPoint: makeTangentialPoint(newEndX, newEndY, false),
                   controlPoints: [],
                   color: getRandomColor(),
                 };
@@ -176,7 +181,7 @@
                 
                 // Update names for subsequent paths
                 for (let i = idx + 2; i < lines.length; i++) {
-                  if (lines[i].name && lines[i].name.startsWith('Path ')) {
+                  if (lines[i] && lines[i].name && lines[i].name.startsWith('Path ')) {
                     lines[i].name = `Path ${i + 1}`;
                   }
                 }

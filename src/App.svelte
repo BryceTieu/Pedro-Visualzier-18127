@@ -1,4 +1,20 @@
 <script lang="ts">
+const trailSteps = 20;
+const MAX_HISTORY = 100;
+let lastSavedState = '';
+let currentHash = '';
+let isUndoRedo = false;
+let canUndo = false;
+let canRedo = false;
+let comparisonMode = false;
+function loadActivePathToLegacy() {}
+function saveToHistory() {}
+function syncPathFromLegacy() {}
+function getStateHash() { return ''; }
+function deepClone(obj: any) { return JSON.parse(JSON.stringify(obj)); }
+function addNewPath() {}
+let paths: RobotPath[] = [];
+let activePathIndex: number = 0;
   import * as d3 from "d3";
   import { onMount } from "svelte";
   import Two from "two.js";
@@ -18,7 +34,9 @@
     shortestRotation,
   } from "./utils";
   import hotkeys from 'hotkeys-js';
-  import { clickToPlaceMode, centerLineWarningEnabled, showCollisionPath, collisionNextSegmentOnly } from "./stores";
+  import { clickToPlaceMode, centerLineWarningEnabled, collisionNextSegmentOnly, showCornerDots, colliderTrailColorMode } from "./stores";
+    import { showAllCollisions } from "./stores";
+  import { get } from 'svelte/store';
   import html2canvas from "html2canvas";
   import GIF from "gif.js";
 
@@ -81,75 +99,6 @@
     },
   ];
 
-  // Multi-path support for path comparison
-  let paths: RobotPath[] = [
-    {
-      id: 'path-1',
-      name: 'Path 1',
-      color: '#3b82f6', // blue-500
-      startPoint: { x: 56, y: 8, heading: "linear", startDeg: 90, endDeg: 180 },
-      lines: [
-        {
-          name: "Segment 1",
-          endPoint: { x: 56, y: 36, heading: "linear", startDeg: 90, endDeg: 180 },
-          controlPoints: [],
-          color: '#3b82f6',
-        },
-      ],
-      visible: true,
-    }
-  ];
-  let activePathIndex = 0;
-  let comparisonMode = false; // When true, animate all paths simultaneously
-  let isSettingActivePath = false; // Flag to prevent circular updates
-  
-  // Sync paths -> lines/startPoint only when switching paths
-  function loadActivePathToLegacy() {
-    if (paths[activePathIndex]) {
-      isSettingActivePath = true;
-      startPoint = JSON.parse(JSON.stringify(paths[activePathIndex].startPoint));
-      lines = JSON.parse(JSON.stringify(paths[activePathIndex].lines));
-      isSettingActivePath = false;
-    }
-  }
-  
-  // Sync lines/startPoint -> paths whenever they change (two-way binding)
-  $: if (!isSettingActivePath && paths[activePathIndex]) {
-    paths[activePathIndex].startPoint = startPoint;
-    paths[activePathIndex].lines = lines;
-  }
-  
-  // Update paths when startPoint or lines change (two-way binding)
-  function syncPathFromLegacy() {
-    if (paths[activePathIndex]) {
-      paths[activePathIndex].startPoint = startPoint;
-      paths[activePathIndex].lines = lines;
-      paths = paths; // trigger reactivity
-    }
-  }
-  
-  function addNewPath() {
-    const newColor = getRandomColor();
-    const newPath: RobotPath = {
-      id: `path-${Date.now()}`,
-      name: `Path ${paths.length + 1}`,
-      color: newColor,
-      startPoint: { x: 56, y: 8, heading: "linear", startDeg: 90, endDeg: 180 },
-      lines: [
-        {
-          name: "Segment 1",
-          endPoint: { x: 56, y: 36, heading: "linear", startDeg: 90, endDeg: 180 },
-          controlPoints: [],
-          color: newColor,
-        },
-      ],
-      visible: true,
-    };
-    paths = [...paths, newPath];
-    activePathIndex = paths.length - 1;
-    loadActivePathToLegacy();
-    saveToHistory();
-  }
   
   function deletePath(index: number) {
     if (paths.length <= 1) return; // Keep at least one path
@@ -258,30 +207,7 @@
   
   let undoStack: HistoryState[] = [];
   let redoStack: HistoryState[] = [];
-  const MAX_HISTORY = 50;
-  let isUndoRedo = false; // Flag to prevent saving state during undo/redo
-  let lastSavedState: string = ''; // Track last saved state to avoid duplicates
-  
-  function deepClone<T>(obj: T): T {
-    return JSON.parse(JSON.stringify(obj));
-  }
-  
-  function getStateHash(): string {
-    return JSON.stringify({ startPoint, lines });
-  }
-  
-  function saveToHistory() {
-    if (isUndoRedo) return;
-    
-    const currentHash = getStateHash();
-    if (currentHash === lastSavedState) return; // No changes
-    
-    const state: HistoryState = {
-      startPoint: deepClone(startPoint),
-      lines: deepClone(lines)
-    };
-    
-    undoStack = [...undoStack, state]; // Create new array for reactivity
+                      // ...existing code...
     if (undoStack.length > MAX_HISTORY) {
       undoStack = undoStack.slice(1);
     }
@@ -289,7 +215,7 @@
     // Clear redo stack when new action is performed
     redoStack = [];
     lastSavedState = currentHash;
-  }
+
   
   function undo() {
     if (undoStack.length === 0) return;
@@ -356,25 +282,29 @@
   });
 
   // Helper function to get robot's 4 corners given center position, size, and rotation angle (in degrees)
-  function getRobotCorners(centerX: number, centerY: number, width: number, height: number, angleDeg: number): BasePoint[] {
-    const angleRad = angleDeg * Math.PI / 180;
+  // Helper function to get robot's 4 corners given center position, size, and rotation angle (in degrees)
+  // Compute robot corners by taking center point, length, width, and rotation.
+  // length: robot front-to-back size (inches)
+  // width: robot side-to-side size (inches)
+  function getRobotCorners(centerX: number, centerY: number, length: number, width: number, angleDeg: number): BasePoint[] {
+    const angleRad = (angleDeg * Math.PI) / 180;
     const cos = Math.cos(angleRad);
     const sin = Math.sin(angleRad);
+    const halfL = length / 2;
     const halfW = width / 2;
-    const halfH = height / 2;
-    
-    // 4 corners relative to center (before rotation)
-    const corners = [
-      { x: -halfW, y: -halfH }, // front-left
-      { x: halfW, y: -halfH },  // front-right
-      { x: halfW, y: halfH },   // back-right
-      { x: -halfW, y: halfH },  // back-left
+
+    // Local coordinates of corners (relative to robot center, before rotation)
+    // Order: front-left, front-right, back-right, back-left
+    const cornersLocal = [
+      { x: halfL, y: -halfW }, // front-left (forward is +x)
+      { x: halfL, y: halfW },  // front-right
+      { x: -halfL, y: halfW }, // back-right
+      { x: -halfL, y: -halfW } // back-left
     ];
-    
-    // Rotate each corner and translate to world position
-    return corners.map(c => ({
+
+    return cornersLocal.map((c) => ({
       x: centerX + c.x * cos - c.y * sin,
-      y: centerY + c.x * sin + c.y * cos
+      y: centerY + c.x * sin + c.y * cos,
     }));
   }
 
@@ -400,7 +330,7 @@
         const dx = nextPt.x - currentPt.x;
         const dy = nextPt.y - currentPt.y;
         if (dx !== 0 || dy !== 0) {
-          return radiansToDegrees(Math.atan2(dy, dx));
+          return -radiansToDegrees(Math.atan2(dy, dx));
         }
         return 0;
       default:
@@ -430,7 +360,7 @@
         const dx = nextPt.x - currentPt.x;
         const dy = nextPt.y - currentPt.y;
         if (dx !== 0 || dy !== 0) {
-          return radiansToDegrees(Math.atan2(dy, dx));
+          return -radiansToDegrees(Math.atan2(dy, dx));
         }
         return 0;
       default:
@@ -438,45 +368,8 @@
     }
   }
 
-  // Reactive center line crossing detection - checks if any robot corner crosses center line
-  $: startingSide = startPoint.x < 72 ? 'left' : 'right';
-  
-  $: crossesCenterLine = (() => {
-    const centerLine = 72;
-    const side = startPoint.x < centerLine ? 'left' : 'right';
-    
-    // Sample along each path segment and check robot corners at each point
-    let prevPoint: BasePoint = {x: startPoint.x, y: startPoint.y};
-    
-    for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-      const line = lines[lineIdx];
-      const curvePoints = [prevPoint, ...line.controlPoints, line.endPoint];
-      
-      // Sample 20 points along each curve
-      for (let i = 0; i <= 20; i++) {
-        const t = i / 20;
-        const pt = getCurvePoint(t, curvePoints);
-        const heading = getHeadingAtPoint(lineIdx, t);
-        
-        // Get all 4 corners of the rotated robot
-        const corners = getRobotCorners(pt.x, pt.y, robotWidth, robotHeight, heading);
-        
-        // Check if any corner crosses the center line
-        for (const corner of corners) {
-          if (side === 'left' && corner.x > centerLine) {
-            return true;
-          }
-          if (side === 'right' && corner.x < centerLine) {
-            return true;
-          }
-        }
-      }
-      
-      prevPoint = {x: line.endPoint.x, y: line.endPoint.y};
-    }
-    
-    return false;
-  })();
+  // Reactive center line crossing detection (origin-based)
+  // Center line detection removed with collision path logic
 
   $: points = (() => {
     let _points = [];
@@ -614,77 +507,14 @@
     return _path;
   })();
 
-  // Generate collision boundary path (robot footprint along the entire path)
-  // Returns an array of robot corner positions at each sample point
-  $: collisionRobots = (() => {
-    if (!$showCollisionPath) return [];
-    
-    const samples = 30; // samples per line segment for smooth coverage
-    const robots: { corners: BasePoint[], color: string }[] = [];
-    
-    // Calculate current line index based on robotPercent
-    const effectivePercent = Math.min(robotPercent, 99.999999999);
-    const totalLineProgress = (lines.length * effectivePercent) / 100;
-    const currentLineIdx = Math.min(Math.trunc(totalLineProgress), lines.length - 1);
-    
-    // In comparison mode, generate collision for all visible paths
-    if (comparisonMode) {
-      paths.forEach((pathData, pathIdx) => {
-        if (!pathData.visible) return;
-        
-        const pathLines = pathData.lines;
-        const pathStart = pathData.startPoint;
-        const pathColor = pathData.color;
-        
-        // Calculate current line for this path
-        const pathTotalLineProgress = (pathLines.length * effectivePercent) / 100;
-        const pathCurrentLineIdx = Math.min(Math.trunc(pathTotalLineProgress), pathLines.length - 1);
-        
-        pathLines.forEach((line, lineIdx) => {
-          // If "next segment only" is enabled, only show current segment
-          if ($collisionNextSegmentOnly && lineIdx !== pathCurrentLineIdx) {
-            return;
-          }
-          
-          const _startPoint = lineIdx === 0 ? pathStart : pathLines[lineIdx - 1].endPoint;
-          const cps = [_startPoint, ...line.controlPoints, line.endPoint];
-          
-          for (let i = 0; i <= samples; i++) {
-            const t = i / samples;
-            const pt = getCurvePoint(t, cps);
-            // Calculate heading for this path
-            const heading = getHeadingAtPointForPath(pathLines, pathStart, lineIdx, t);
-            
-            const corners = getRobotCorners(pt.x, pt.y, robotWidth, robotHeight, heading);
-            robots.push({ corners, color: pathColor });
-          }
-        });
-      });
-    } else {
-      // Single path mode - original behavior
-      lines.forEach((line, lineIdx) => {
-        // If "next segment only" is enabled, only show current segment
-        if ($collisionNextSegmentOnly && lineIdx !== currentLineIdx) {
-          return;
-        }
-        
-        const _startPoint = lineIdx === 0 ? startPoint : lines[lineIdx - 1].endPoint;
-        const cps = [_startPoint, ...line.controlPoints, line.endPoint];
-        
-        for (let i = 0; i <= samples; i++) {
-          const t = i / samples;
-          const pt = getCurvePoint(t, cps);
-          const heading = getHeadingAtPoint(lineIdx, t);
-          
-          // Get robot corners at this position (already accounts for rotation)
-          const corners = getRobotCorners(pt.x, pt.y, robotWidth, robotHeight, heading);
-          robots.push({ corners, color: line.color });
-        }
-      });
-    }
-    
-    return robots;
-  })();
+  interface CollisionBox {
+    x: number;
+    y: number;
+    heading: number;
+    length: number; // front-back
+    width: number;  // side-side
+    color: string;
+  }
 
   let robotXY: BasePoint = { x: 0, y: 0 };
   let robotHeading: number = 0;
@@ -727,7 +557,7 @@
         if (dx !== 0 || dy !== 0) {
           const angle = Math.atan2(dy, dx);
 
-          robotHeading = radiansToDegrees(angle);
+          robotHeading = -radiansToDegrees(angle);
         }
 
         break;
@@ -775,7 +605,7 @@
         const dx = nextPoint.x - posX;
         const dy = nextPoint.y - posY;
         if (dx !== 0 || dy !== 0) {
-          heading = radiansToDegrees(Math.atan2(dy, dx));
+          heading = -radiansToDegrees(Math.atan2(dy, dx));
         }
         break;
     }
@@ -796,31 +626,169 @@
     two.renderer.domElement.style["height"] = "100%";
 
     two.clear();
-
-    // Draw collision boundary FIRST (behind everything) if enabled
-    if ($showCollisionPath && collisionRobots.length > 0) {
-      // Draw individual robot outlines at each sample position (no fill, just borders)
-      collisionRobots.forEach((robot, idx) => {
-        const anchors = robot.corners.map((pt, i) => 
-          new Two.Anchor(
-            x(pt.x), 
-            y(pt.y), 
-            0, 0, 0, 0, 
-            i === 0 ? Two.Commands.move : Two.Commands.line
-          )
-        );
-        anchors.forEach(a => a.relative = false);
-        
-        const robotOutline = new Two.Path(anchors);
-        robotOutline.automatic = false;
-        robotOutline.closed = true;
-        robotOutline.stroke = robot.color;
-        robotOutline.linewidth = x(0.15);
-        robotOutline.noFill();
-        robotOutline.opacity = 0.5;
-        robotOutline.id = `collision-robot-${idx}`;
-        two.add(robotOutline);
-      });
+    // Draw robot origin marker (center) during animation
+    if (robotXY) {
+      // ...existing code...
+      // Show coordinates and rotation, offset further right
+      // ...existing code...
+      // By default, only show the robot collider at the next point
+      // If showAllCollisions is enabled, show all static collision points
+      if ($showAllCollisions) {
+        const staticSteps = 60;
+        const staticColor = 'rgba(0,200,255,0.3)';
+        for (let i = 0; i <= staticSteps; i++) {
+          const staticPercent = (i / staticSteps) * 100;
+          let staticLineProgress = (lines.length * Math.min(staticPercent, 99.999)) / 100;
+          let staticLineIdx = Math.min(Math.trunc(staticLineProgress), lines.length - 1);
+          let staticLine = lines[staticLineIdx];
+          let staticLinePercent = easeInOutQuad(staticLineProgress - Math.floor(staticLineProgress));
+          let staticStartPoint = staticLineIdx === 0 ? startPoint : lines[staticLineIdx - 1].endPoint;
+          let staticRobotInchesXY = getCurvePoint(staticLinePercent, [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
+          let staticHeading = (() => {
+            switch (staticLine.endPoint.heading) {
+              case "linear":
+                return -shortestRotation(staticLine.endPoint.startDeg, staticLine.endPoint.endDeg, staticLinePercent);
+              case "constant":
+                return -staticLine.endPoint.degrees;
+              case "tangential":
+                const staticNextPointInches = getCurvePoint(staticLinePercent + (staticLine.endPoint.reverse ? -0.01 : 0.01), [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
+                const staticDx = staticNextPointInches.x - staticRobotInchesXY.x;
+                const staticDy = staticNextPointInches.y - staticRobotInchesXY.y;
+                if (staticDx !== 0 || staticDy !== 0) {
+                  return -radiansToDegrees(Math.atan2(staticDy, staticDx));
+                }
+                return 0;
+              default:
+                return 0;
+            }
+          })();
+          // Compute corners
+          const staticAngleRad = (-staticHeading * Math.PI) / 180;
+          const staticCos = Math.cos(staticAngleRad);
+          const staticSin = Math.sin(staticAngleRad);
+          const staticHalfL = robotWidth / 2;
+          const staticHalfW = robotHeight / 2;
+          const staticCornersInches = [
+            { x: staticRobotInchesXY.x + staticHalfL * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + (-staticHalfW) * staticCos },
+            { x: staticRobotInchesXY.x + staticHalfL * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + staticHalfW * staticCos },
+            { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + staticHalfW * staticCos },
+            { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + (-staticHalfW) * staticCos }
+          ];
+          for (let j = 0; j < staticCornersInches.length; j++) {
+            const staticA = staticCornersInches[j];
+            const staticB = staticCornersInches[(j + 1) % staticCornersInches.length];
+            const staticEdge = new Two.Line(x(staticA.x), y(staticA.y), x(staticB.x), y(staticB.y));
+            staticEdge.stroke = staticColor;
+            staticEdge.linewidth = x(0.12);
+            staticEdge.id = `collider-static-${i}-${j}`;
+            two.add(staticEdge);
+          }
+        }
+      }
+      if ($collisionNextSegmentOnly) {
+        // Show all collision points between the robot's current position and the next path point
+        const staticLineIdx = Math.min(Math.trunc(percent / 100 * lines.length), lines.length - 1);
+        const staticLine = lines[staticLineIdx];
+        const staticStartPoint = staticLineIdx === 0 ? startPoint : lines[staticLineIdx - 1].endPoint;
+        const steps = 30;
+        for (let i = 0; i <= steps; i++) {
+          // Uniformly sample between the start and end of the current segment
+          const t = i / steps;
+          const staticRobotInchesXY = getCurvePoint(t, [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
+          let staticHeading = (() => {
+            switch (staticLine.endPoint.heading) {
+              case "linear":
+                return -shortestRotation(staticLine.endPoint.startDeg, staticLine.endPoint.endDeg, t);
+              case "constant":
+                return -staticLine.endPoint.degrees;
+              case "tangential":
+                const staticNextPointInches = getCurvePoint(t + (staticLine.endPoint.reverse ? -0.01 : 0.01), [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
+                const staticDx = staticNextPointInches.x - staticRobotInchesXY.x;
+                const staticDy = staticNextPointInches.y - staticRobotInchesXY.y;
+                if (staticDx !== 0 || staticDy !== 0) {
+                  return -radiansToDegrees(Math.atan2(staticDy, staticDx));
+                }
+                return 0;
+              default:
+                return 0;
+            }
+          })();
+          // Compute corners
+          const staticAngleRad = (-staticHeading * Math.PI) / 180;
+          const staticCos = Math.cos(staticAngleRad);
+          const staticSin = Math.sin(staticAngleRad);
+          const staticHalfL = robotWidth / 2;
+          const staticHalfW = robotHeight / 2;
+          const staticCornersInches = [
+            { x: staticRobotInchesXY.x + staticHalfL * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + (-staticHalfW) * staticCos },
+            { x: staticRobotInchesXY.x + staticHalfL * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + staticHalfW * staticCos },
+            { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + staticHalfW * staticCos },
+            { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + (-staticHalfW) * staticCos }
+          ];
+          for (let j = 0; j < staticCornersInches.length; j++) {
+            const staticA = staticCornersInches[j];
+            const staticB = staticCornersInches[(j + 1) % staticCornersInches.length];
+            const staticEdge = new Two.Line(x(staticA.x), y(staticA.y), x(staticB.x), y(staticB.y));
+            staticEdge.stroke = 'rgba(0,200,255,0.7)';
+            staticEdge.linewidth = x(0.18);
+            staticEdge.id = `collider-next-${i}-${j}`;
+            two.add(staticEdge);
+          }
+        }
+      }
+      // If both toggles are off, do not render any collision points
+      // ...existing code...
+            // Compute corners in inches, then convert to pixels
+            const angleRad = (-robotHeading * Math.PI) / 180;
+            const cos = Math.cos(angleRad);
+            const sin = Math.sin(angleRad);
+            const halfL = robotWidth / 2;
+            const halfW = robotHeight / 2;
+            // Robot center in inches
+            const robotInchesXY = { x: x.invert(robotXY.x), y: y.invert(robotXY.y) };
+            // Rectangle corners (front-left, front-right, back-right, back-left) in inches
+            const cornersInches = [
+              { x: robotInchesXY.x + halfL * cos - (-halfW) * sin, y: robotInchesXY.y + halfL * sin + (-halfW) * cos }, // front-left
+              { x: robotInchesXY.x + halfL * cos - halfW * sin, y: robotInchesXY.y + halfL * sin + halfW * cos },       // front-right
+              { x: robotInchesXY.x + (-halfL) * cos - halfW * sin, y: robotInchesXY.y + (-halfL) * sin + halfW * cos }, // back-right
+              { x: robotInchesXY.x + (-halfL) * cos - (-halfW) * sin, y: robotInchesXY.y + (-halfL) * sin + (-halfW) * cos } // back-left
+            ];
+            // Draw lines from origin to each corner (convert both to pixels)
+            cornersInches.forEach((corner, idx) => {
+              const line = new Two.Line(robotXY.x, robotXY.y, x(corner.x), y(corner.y));
+              line.stroke = '#ff00ff';
+              line.linewidth = x(0.15);
+              line.id = `origin-to-corner-${idx}`;
+              two.add(line);
+            });
+            // Draw lines between corners to form the collider
+            for (let i = 0; i < cornersInches.length; i++) {
+              const a = cornersInches[i];
+              const b = cornersInches[(i + 1) % cornersInches.length];
+              const edge = new Two.Line(x(a.x), y(a.y), x(b.x), y(b.y));
+              edge.stroke = '#00ffff';
+              edge.linewidth = x(0.18);
+              edge.id = `collider-edge-${i}`;
+              two.add(edge);
+            }
+      const originDot = new Two.Circle(robotXY.x, robotXY.y, x(0.7));
+      originDot.fill = '#00ff00';
+      originDot.noStroke();
+      originDot.id = 'robot-origin-dot';
+      two.add(originDot);
+      // Show coordinates and rotation, offset further right
+      const degrees = robotHeading ? robotHeading.toFixed(1) : '0';
+      const originLabel = new Two.Text(
+        `(${(x.invert(robotXY.x)).toFixed(1)}, ${(y.invert(robotXY.y)).toFixed(1)})\n${degrees}°`,
+        robotXY.x + x(5),
+        robotXY.y - x(1.5),
+        x(2.5)
+      );
+      originLabel.fill = '#00ff00';
+      originLabel.size = x(1.2);
+      originLabel.noStroke();
+      originLabel.id = 'robot-origin-label';
+      two.add(originLabel);
     }
 
     // In comparison mode, draw all visible paths
@@ -1192,7 +1160,7 @@
         color: getRandomColor(),
       }*/
   }
-
+  
 
     function sleep(ms: number) {
         return new Promise(res => setTimeout(res, ms));
@@ -1315,23 +1283,39 @@
     two.renderer.domElement.addEventListener("mousedown", () => {
       isDown = true;
     });
-    two.renderer.domElement.addEventListener("mouseup", () => {
-      isDown = false;
+      two.renderer.domElement.addEventListener("mouseup", () => {
+        isDown = false;
+        saveToHistory(); // Save state after dragging point
+      });
+    // Drag point handler (fix teleportation)
+    two.renderer.domElement.addEventListener("mousemove", (evt: MouseEvent) => {
+      if (isDown && currentElem) {
+        const { x: xPos, y: yPos } = getMousePos(evt, two.renderer.domElement);
+        const parts = currentElem.split("-");
+        const lineIdx = Number(parts[1]) - 1;
+        const pointIdx = Number(parts[2]);
+        if (lineIdx === -1) {
+          startPoint.x = x.invert(xPos);
+          startPoint.y = y.invert(yPos);
+        } else {
+          if (pointIdx === 0) {
+            lines[lineIdx].endPoint.x = x.invert(xPos);
+            lines[lineIdx].endPoint.y = y.invert(yPos);
+          } else {
+            lines[lineIdx].controlPoints[pointIdx - 1].x = x.invert(xPos);
+            lines[lineIdx].controlPoints[pointIdx - 1].y = y.invert(yPos);
+          }
+        }
+      }
     });
-    
     // Click-to-place handler
     two.renderer.domElement.addEventListener("click", (evt: MouseEvent) => {
       if (!$clickToPlaceMode) return;
-      
       const elem = document.elementFromPoint(evt.clientX, evt.clientY);
-      // Don't place if clicking on an existing point
       if (elem?.id.startsWith("point")) return;
-      
       const { x: xPos, y: yPos } = getMousePos(evt, two.renderer.domElement);
       const newX = x.invert(xPos);
       const newY = y.invert(yPos);
-      
-      // Add a new line to the path ending at the clicked position
       lines = [
         ...lines,
         {
@@ -1475,7 +1459,6 @@
     ];
   }
 
-
   function addControlPoint() {
     if (lines.length > 0) {
       saveToHistory(); // Save state before making change
@@ -1533,22 +1516,9 @@ $: canRedo = redoStack.length > 0;
 
 </script>
 
-<Navbar bind:lines bind:startPoint bind:settings bind:robotWidth bind:robotHeight bind:percent bind:gifFps {saveFile} {loadFile} {loadRobot} {undo} {redo} {canUndo} {canRedo} fieldElement={fieldContainer} {captureGif}/>
+<Navbar bind:lines bind:startPoint bind:settings bind:robotWidth bind:robotHeight bind:percent bind:gifFps {saveFile} {loadFile} {loadRobot} {undo} {redo} {canUndo} {canRedo} {captureGif}/>
 
 <!-- Center Line Crossing Warning -->
-{#if $centerLineWarningEnabled && crossesCenterLine}
-  <div class="fixed top-20 right-4 z-[1000] animate-pulse">
-    <div class="flex items-center gap-2 px-4 py-3 bg-red-500 text-white rounded-lg shadow-lg shadow-red-500/50">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-5">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-      </svg>
-      <div class="flex flex-col">
-        <span class="font-semibold text-sm">Path Crosses Center Line!</span>
-        <span class="text-xs opacity-90">Robot starts on {startingSide} side but path crosses to {startingSide === 'left' ? 'right' : 'left'} side</span>
-      </div>
-    </div>
-  </div>
-{/if}
 
 <div
   class="w-screen h-screen pt-16 pb-2 px-2 flex flex-row justify-center items-stretch gap-2 overflow-hidden"
@@ -1683,7 +1653,7 @@ $: canRedo = redoStack.length > 0;
           alt="Field"
           class="absolute top-0 left-0 w-full h-full rounded-lg z-10 pointer-events-none"
         />
-        <MathTools {x} {y} {twoElement} {robotXY} {robotHeading} />
+        <MathTools {x} {y} {twoElement} {robotXY} />
         
         <!-- Primary Robot (active path) -->
         <img
@@ -1726,6 +1696,5 @@ $: canRedo = redoStack.length > 0;
     bind:playbackSpeed
     {x}
     {y}
-    {fpa}
   />
-</div>
+ </div>

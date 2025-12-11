@@ -1,4 +1,6 @@
+// ...existing code...
 <script lang="ts">
+  import { showAllCollisions } from '../stores';
   import prettier from "prettier";
   import prettierJavaPlugin from "prettier-plugin-java";
   import { onMount } from "svelte";
@@ -20,7 +22,7 @@
   export let redo: () => void;
   export let canUndo: boolean = false;
   export let canRedo: boolean = false;
-  export let fieldElement: HTMLElement | null = null;
+  export const fieldElement: HTMLElement | null = null;
   export let captureGif: () => Promise<void>;
 
   let exportFullCode = false;
@@ -831,20 +833,40 @@
 
           <div class="flex flex-row justify-between items-center w-full">
             <div class="flex flex-col">
-              <div class="font-light">Show Collision Path</div>
-              <div class="text-xs text-neutral-500 dark:text-neutral-400">Show robot footprint boundary along path</div>
+              <div class="font-light">Show All Collision Points</div>
+              <div class="text-xs text-neutral-500 dark:text-neutral-400">Show all robot collision points along the path</div>
             </div>
             <button 
-              on:click={() => showCollisionPath.update(v => !v)}
+              on:click={() => { showAllCollisions.set(true); collisionNextSegmentOnly.set(false); }}
               class="relative w-12 h-6 rounded-full transition-colors duration-200"
-              class:bg-green-500={$showCollisionPath}
-              class:bg-neutral-300={!$showCollisionPath}
-              class:dark:bg-neutral-600={!$showCollisionPath}
+              class:bg-green-500={$showAllCollisions}
+              class:bg-neutral-300={!$showAllCollisions}
+              class:dark:bg-neutral-600={!$showAllCollisions}
             >
               <div 
                 class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
-                class:translate-x-1={!$showCollisionPath}
-                class:translate-x-7={$showCollisionPath}
+                class:translate-x-1={!$showAllCollisions}
+                class:translate-x-7={$showAllCollisions}
+              ></div>
+            </button>
+          </div>
+
+          <div class="flex flex-row justify-between items-center w-full pl-4">
+            <div class="flex flex-col">
+              <div class="font-light">Current Point Only</div>
+              <div class="text-xs text-neutral-500 dark:text-neutral-400">Only show collision for current point</div>
+            </div>
+            <button 
+              on:click={() => { collisionNextSegmentOnly.set(true); showAllCollisions.set(false); }}
+              class="relative w-12 h-6 rounded-full transition-colors duration-200"
+              class:bg-green-500={$collisionNextSegmentOnly}
+              class:bg-neutral-300={!$collisionNextSegmentOnly}
+              class:dark:bg-neutral-600={!$collisionNextSegmentOnly}
+            >
+              <div 
+                class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
+                class:translate-x-1={!$collisionNextSegmentOnly}
+                class:translate-x-7={$collisionNextSegmentOnly}
               ></div>
             </button>
           </div>
