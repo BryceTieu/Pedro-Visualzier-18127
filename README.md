@@ -17,7 +17,6 @@ This project is a fork and major extension of the original path visualizer by FR
 - **Segment-Only Collision Display:** Option to show collision boxes only for the current segment.
 - **Improved UI/UX:** Enhanced controls, modernized interface, and more intuitive path management.
 - **Persistent Settings:** UI state and preferences are now preserved across sessions.
-- **GitHub Pages Deployment:** Ready for easy online hosting and sharing.
 
 ## Getting Started
 1. Clone the repository:
