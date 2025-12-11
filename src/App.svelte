@@ -1,4 +1,7 @@
 <script lang="ts">
+// Map playbar percent (including waits) to robotPercent and wait state
+import { getRobotPercentAndWait } from './utils';
+
 const trailSteps = 20;
 const MAX_HISTORY = 100;
 let lastSavedState = '';
@@ -908,8 +911,9 @@ let activePathIndex: number = 0;
 
   // Sync robotPercent to percent when not playing (allows scrubbing the playbar)
   $: if (!playing) {
-    // When scrubbing, robotPercent should follow percent directly
-    robotPercent = Math.min(percent / (movementRatio || 1), 99.999);
+    // When scrubbing, map playbar percent to robot percent and wait state
+    const { robotPercent: mappedRobotPercent } = getRobotPercentAndWait(percent, lines);
+    robotPercent = Math.min(mappedRobotPercent, 99.999);
   }
 
   function animate(timestamp: number) {
@@ -990,9 +994,9 @@ let activePathIndex: number = 0;
       previousTime = null;
       waitingUntil = null;
       accumulatedWaitTime = 0;
-      // When starting from slider position, sync robotPercent
-      // But we need to scale percent properly if there are waits
-      robotPercent = Math.min(percent / movementRatio, 99.999);
+      // When starting from slider position, sync robotPercent using mapping
+      const { robotPercent: mappedRobotPercent } = getRobotPercentAndWait(percent, lines);
+      robotPercent = Math.min(mappedRobotPercent, 99.999);
       // Initialize lastLineIdx based on current robotPercent
       let totalLineProgress = (lines.length * Math.min(robotPercent, 99.999999999)) / 100;
       lastLineIdx = Math.min(Math.trunc(totalLineProgress), lines.length - 1);

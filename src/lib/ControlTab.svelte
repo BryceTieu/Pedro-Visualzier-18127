@@ -26,6 +26,24 @@
   export let x: d3.ScaleLinear<number, number, number>;
   export let y: d3.ScaleLinear<number, number, number>;
   export let settings: FPASettings;
+
+  import { getRobotPercentAndWait } from '../utils';
+  // Precompute playbar percent for each segment end, accounting for waits
+  $: markerPercents = lines.map((line, idx) => {
+    let lo = 0, hi = 100, target = ((idx+1)/lines.length)*100, found = 100;
+    for (let iter = 0; iter < 16; ++iter) {
+      let mid = (lo + hi) / 2;
+      let { robotPercent } = getRobotPercentAndWait(mid, lines);
+      if (robotPercent < target) {
+        lo = mid;
+      } else {
+        found = mid;
+        hi = mid;
+      }
+    }
+    found = Math.max(0, Math.min(100, found));
+    return found;
+  });
 </script>
 
 <div class="flex-1 flex flex-shrink-0 flex-col justify-start items-center gap-2 h-full overflow-y-auto">
@@ -470,24 +488,43 @@ With tangential heading, the heading follows the direction of the line."
           class="w-full appearance-none slider focus:outline-none absolute inset-0"
         />
         <!-- Waypoint markers -->
-        {#each lines as line, idx}
-          <!-- Start point (only for first line) -->
-          {#if idx === 0}
-            <button
-              class="absolute w-3 h-3 rounded-full transform -translate-x-1/2 z-10 hover:scale-125 transition-transform border-2 border-white dark:border-neutral-800 shadow-sm"
-              style="left: 0%; background: {line.color};"
-              title="Start Point ({startPoint.x.toFixed(1)}, {startPoint.y.toFixed(1)})"
-              on:click={() => { percent = 0; }}
-            />
-          {/if}
-          <!-- End point of each line -->
+        <!-- Compute playbar percent for each segment end, accounting for waits -->
+        {#if lines.length > 0}
           <button
             class="absolute w-3 h-3 rounded-full transform -translate-x-1/2 z-10 hover:scale-125 transition-transform border-2 border-white dark:border-neutral-800 shadow-sm"
-            style="left: {((idx + 1) / lines.length) * 100}%; background: {line.color};"
-            title="{line.name || `Path ${idx + 1}`} End ({line.endPoint.x.toFixed(1)}, {line.endPoint.y.toFixed(1)})"
-            on:click={() => { percent = ((idx + 1) / lines.length) * 100 - 0.000001; }}
+            style="left: 0%; background: {lines[0].color};"
+            title={`Start Point (${startPoint.x.toFixed(1)}, ${startPoint.y.toFixed(1)})`}
+            on:click={() => { percent = 0; }}
           />
-        {/each}
+          {#each markerPercents as found, idx}
+            <button
+              class="absolute w-3 h-3 rounded-full transform -translate-x-1/2 z-10 hover:scale-125 transition-transform border-2 border-white dark:border-neutral-800 shadow-sm"
+              style={`left: ${found}%; background: ${lines[idx].color};`}
+              title={`${lines[idx].name || `Path ${idx + 1}`} End (${lines[idx].endPoint.x.toFixed(1)}, ${lines[idx].endPoint.y.toFixed(1)})`}
+              on:click={() => { percent = found - 0.000001; }}
+            />
+          {/each}
+        {/if}
+      <script lang="ts">
+        // ...existing code...
+
+        // Precompute playbar percent for each segment end, accounting for waits
+        $: markerPercents = lines.map((line, idx) => {
+          let lo = 0, hi = 100, target = ((idx+1)/lines.length)*100, found = 100;
+          for (let iter = 0; iter < 16; ++iter) {
+            let mid = (lo + hi) / 2;
+            let { robotPercent } = getRobotPercentAndWait(mid);
+            if (robotPercent < target) {
+              lo = mid;
+            } else {
+              found = mid;
+              hi = mid;
+            }
+          }
+          found = Math.max(0, Math.min(100, found));
+          return found;
+        });
+      </script>
       </div>
     </div>
   </div>

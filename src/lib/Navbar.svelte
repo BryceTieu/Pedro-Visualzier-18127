@@ -226,16 +226,30 @@
     // Mirror all points horizontally across the center of the field (x = 72)
     const centerX = 72;
     startPoint.x = 2 * centerX - startPoint.x;
-    
+    if (typeof startPoint.heading === 'number') {
+      startPoint.heading = 180 - startPoint.heading;
+    }
+    if (typeof startPoint.startDeg === 'number') {
+      startPoint.startDeg = 180 - startPoint.startDeg;
+    }
+    if (typeof startPoint.endDeg === 'number') {
+      startPoint.endDeg = 180 - startPoint.endDeg;
+    }
     lines = lines.map(line => ({
       ...line,
       endPoint: {
         ...line.endPoint,
-        x: 2 * centerX - line.endPoint.x
+        x: 2 * centerX - line.endPoint.x,
+        ...(typeof line.endPoint.heading === 'number' ? { heading: 180 - line.endPoint.heading } : {}),
+        ...(typeof line.endPoint.startDeg === 'number' ? { startDeg: 180 - line.endPoint.startDeg } : {}),
+        ...(typeof line.endPoint.endDeg === 'number' ? { endDeg: 180 - line.endPoint.endDeg } : {}),
       },
       controlPoints: line.controlPoints.map(cp => ({
         ...cp,
-        x: 2 * centerX - cp.x
+        x: 2 * centerX - cp.x,
+        ...(typeof cp.heading === 'number' ? { heading: 180 - cp.heading } : {}),
+        ...(typeof cp.startDeg === 'number' ? { startDeg: 180 - cp.startDeg } : {}),
+        ...(typeof cp.endDeg === 'number' ? { endDeg: 180 - cp.endDeg } : {}),
       }))
     }));
   }
@@ -244,16 +258,30 @@
     // Mirror all points vertically across the center of the field (y = 72)
     const centerY = 72;
     startPoint.y = 2 * centerY - startPoint.y;
-    
+    if (typeof startPoint.heading === 'number') {
+      startPoint.heading = -startPoint.heading;
+    }
+    if (typeof startPoint.startDeg === 'number') {
+      startPoint.startDeg = -startPoint.startDeg;
+    }
+    if (typeof startPoint.endDeg === 'number') {
+      startPoint.endDeg = -startPoint.endDeg;
+    }
     lines = lines.map(line => ({
       ...line,
       endPoint: {
         ...line.endPoint,
-        y: 2 * centerY - line.endPoint.y
+        y: 2 * centerY - line.endPoint.y,
+        ...(typeof line.endPoint.heading === 'number' ? { heading: -line.endPoint.heading } : {}),
+        ...(typeof line.endPoint.startDeg === 'number' ? { startDeg: -line.endPoint.startDeg } : {}),
+        ...(typeof line.endPoint.endDeg === 'number' ? { endDeg: -line.endDeg } : {}),
       },
       controlPoints: line.controlPoints.map(cp => ({
         ...cp,
-        y: 2 * centerY - cp.y
+        y: 2 * centerY - cp.y,
+        ...(typeof cp.heading === 'number' ? { heading: -cp.heading } : {}),
+        ...(typeof cp.startDeg === 'number' ? { startDeg: -cp.startDeg } : {}),
+        ...(typeof cp.endDeg === 'number' ? { endDeg: -cp.endDeg } : {}),
       }))
     }));
   }
@@ -831,44 +859,35 @@
             </button>
           </div>
 
-          <div class="flex flex-row justify-between items-center w-full">
-            <div class="flex flex-col">
-              <div class="font-light">Show All Collision Points</div>
-              <div class="text-xs text-neutral-500 dark:text-neutral-400">Show all robot collision points along the path</div>
-            </div>
-            <button 
-              on:click={() => { showAllCollisions.set(true); collisionNextSegmentOnly.set(false); }}
-              class="relative w-12 h-6 rounded-full transition-colors duration-200"
-              class:bg-green-500={$showAllCollisions}
-              class:bg-neutral-300={!$showAllCollisions}
-              class:dark:bg-neutral-600={!$showAllCollisions}
-            >
-              <div 
-                class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
-                class:translate-x-1={!$showAllCollisions}
-                class:translate-x-7={$showAllCollisions}
-              ></div>
-            </button>
-          </div>
 
-          <div class="flex flex-row justify-between items-center w-full pl-4">
-            <div class="flex flex-col">
-              <div class="font-light">Current Point Only</div>
-              <div class="text-xs text-neutral-500 dark:text-neutral-400">Only show collision for current point</div>
+          <div class="flex flex-col gap-2 w-full">
+            <div class="font-light">Collision Visualization</div>
+            <div class="flex flex-row gap-2">
+              <button
+                class="px-3 py-1 rounded-full text-sm font-medium transition-colors duration-200"
+                class:bg-green-500={$showAllCollisions}
+                class:bg-neutral-300={!$showAllCollisions}
+                class:dark:bg-neutral-600={!$showAllCollisions}
+                on:click={() => { showAllCollisions.set(true); collisionNextSegmentOnly.set(false); }}
+              >All Points</button>
+              <button
+                class="px-3 py-1 rounded-full text-sm font-medium transition-colors duration-200"
+                class:bg-green-500={$collisionNextSegmentOnly}
+                class:bg-neutral-300={!$collisionNextSegmentOnly}
+                class:dark:bg-neutral-600={!$collisionNextSegmentOnly}
+                on:click={() => { collisionNextSegmentOnly.set(true); showAllCollisions.set(false); }}
+              >Current Segment</button>
+              <button
+                class="px-3 py-1 rounded-full text-sm font-medium transition-colors duration-200"
+                class:bg-red-500={!$showAllCollisions && !$collisionNextSegmentOnly}
+                class:bg-neutral-300={$showAllCollisions || $collisionNextSegmentOnly}
+                class:dark:bg-neutral-600={$showAllCollisions || $collisionNextSegmentOnly}
+                on:click={() => { showAllCollisions.set(false); collisionNextSegmentOnly.set(false); }}
+              >Off</button>
             </div>
-            <button 
-              on:click={() => { collisionNextSegmentOnly.set(true); showAllCollisions.set(false); }}
-              class="relative w-12 h-6 rounded-full transition-colors duration-200"
-              class:bg-green-500={$collisionNextSegmentOnly}
-              class:bg-neutral-300={!$collisionNextSegmentOnly}
-              class:dark:bg-neutral-600={!$collisionNextSegmentOnly}
-            >
-              <div 
-                class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
-                class:translate-x-1={!$collisionNextSegmentOnly}
-                class:translate-x-7={$collisionNextSegmentOnly}
-              ></div>
-            </button>
+            <div class="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+              Choose how to visualize robot collision points. "Off" disables all collision overlays.
+            </div>
           </div>
 
           {#if $showCollisionPath}
