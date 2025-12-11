@@ -1,0 +1,489 @@
+<script lang="ts">
+  import _ from "lodash";
+  import { getRandomColor } from "../utils";
+
+  export let percent: number;
+  export let playing: boolean;
+  export let play: () => any;
+  export let pause: () => any;
+  export let startPoint: Point;
+  export let lines: Line[];
+  export let robotWidth: number = 16;
+  export let robotHeight: number = 16;
+  export let robotXY: BasePoint;
+  export let robotHeading: number;
+  export let playbackSpeed: number = 1;
+  export let fpa: (l: FPALine, s: FPASettings) => Promise<Line>;
+  export let x: d3.ScaleLinear<number, number, number>;
+  export let y: d3.ScaleLinear<number, number, number>;
+  export let settings: FPASettings;
+</script>
+
+<div class="flex-1 flex flex-shrink-0 flex-col justify-start items-center gap-2 h-full overflow-y-auto">
+  <div
+    class="flex flex-col justify-start items-start w-full rounded-lg bg-neutral-100 dark:bg-neutral-950 shadow-md p-4 overflow-y-scroll overflow-x-hidden h-full gap-6"
+  >
+    <div class="flex flex-col w-full justify-start items-start gap-0.5 text-sm">
+      <div class="font-semibold">Canvas Options</div>
+      <div class="flex flex-row justify-start items-center gap-2">
+        <div class="font-extralight">Robot Length:</div>
+        <input
+          bind:value={robotWidth}
+          on:change={() => {
+            if (robotWidth < 12) robotWidth = 12;
+            if (robotWidth > 18) robotWidth = 18;
+            if (settings) {
+              settings.rWidth = robotWidth;
+            }
+          }}
+          type="number"
+          min="12"
+          max="18"
+          class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-16"
+          step="1"
+        />
+        <div class="font-extralight">Robot Width:</div>
+        <input
+          bind:value={robotHeight}
+          on:change={() => {
+            if (robotHeight < 12) robotHeight = 12;
+            if (robotHeight > 18) robotHeight = 18;
+            if (settings) {
+              settings.rHeight = robotHeight;
+            }
+          }}
+          type="number"
+          min="12"
+          max="18"
+          class="pl-1.5 rounded-md bg-neutral-100 border-[0.5px] focus:outline-none w-16 dark:bg-neutral-950 dark:border-neutral-700"
+          step="1"
+        />
+      </div>
+      <div class="text-xs text-neutral-500 dark:text-neutral-400">Size must be between 12" and 18"</div>
+    </div>
+
+    <div class="flex flex-col w-full justify-start items-start gap-0.5 text-sm">
+      <div class="font-semibold">Current Robot Position</div>
+      <div class="flex flex-row justify-start items-center gap-2">
+        <div class="font-extralight">X:</div>
+        <div class="w-16">{x.invert(robotXY.x).toFixed(3)}</div>
+        <div class="font-extralight">Y:</div>
+        <div class="w-16">{y.invert(robotXY.y).toFixed(3)}</div>
+        <div class="font-extralight">Heading:</div>
+        <div>
+          {robotHeading.toFixed(0) === "-0"
+            ? "0"
+            : -robotHeading.toFixed(0)}&deg;
+        </div>
+      </div>
+    </div>
+
+    <div class="flex flex-col w-full justify-start items-start gap-0.5">
+      <div class="font-semibold">Start Point</div>
+      <div class="flex flex-row justify-start items-center gap-2">
+        <div class="font-extralight">X:</div>
+        <input
+          bind:value={startPoint.x}
+          min="0"
+          max="144"
+          type="number"
+          class="pl-1.5 rounded-md bg-neutral-100 border-[0.5px] focus:outline-none w-28 dark:bg-neutral-950 dark:border-neutral-700"
+          step="0.1"
+        />
+        <div class="font-extralight">Y:</div>
+        <input
+          bind:value={startPoint.y}
+          min="0"
+          max="144"
+          type="number"
+          class="pl-1.5 rounded-md bg-neutral-100 border-[0.5px] focus:outline-none w-28 dark:bg-neutral-950 dark:border-neutral-700"
+          step="0.1"
+        />
+      </div>
+    </div>
+
+    {#each lines as line, idx}
+      <div class="flex flex-col w-full justify-start items-start gap-1">
+        <div class="flex flex-row w-full justify-between">
+          <div
+            class="font-semibold flex flex-row justify-start items-center gap-2"
+          >
+            <input
+              bind:value={line.name}
+              placeholder="Path {idx + 1}"
+              class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none text-sm font-semibold"
+            />
+            <div
+              class="size-2.5 rounded-full shadow-md"
+              style={`background: ${line.color}`}
+            />
+          </div>
+          <div class="flex flex-row justify-end items-center gap-1">
+            <button
+              title="Add Control Point"
+              on:click={() => {
+                line.controlPoints = [
+                  ...line.controlPoints,
+                  {
+                    x: _.random(36, 108),
+                    y: _.random(36, 108),
+                  },
+                ];
+              }}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width={2}
+                class="size-5 stroke-green-500"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M12 4.5v15m7.5-7.5h-15"
+                />
+              </svg>
+            </button>
+            <button
+              title="Insert Line After This Path"
+              on:click={() => {
+                // Get the current endpoint as the start of the new segment
+                const currentEnd = line.endPoint;
+                // Create a new line that starts from current endpoint
+                // and ends at a point between current end and next line's end (or random if last)
+                const newEndX = idx < lines.length - 1 
+                  ? (currentEnd.x + lines[idx + 1].endPoint.x) / 2 
+                  : _.random(0, 144);
+                const newEndY = idx < lines.length - 1 
+                  ? (currentEnd.y + lines[idx + 1].endPoint.y) / 2 
+                  : _.random(0, 144);
+                
+                const newLine = {
+                  name: `Path ${idx + 2}`,
+                  endPoint: {
+                    x: newEndX,
+                    y: newEndY,
+                    heading: "tangential",
+                    reverse: false,
+                  },
+                  controlPoints: [],
+                  color: getRandomColor(),
+                };
+                
+                // Insert the new line after the current one
+                lines.splice(idx + 1, 0, newLine);
+                
+                // Update names for subsequent paths
+                for (let i = idx + 2; i < lines.length; i++) {
+                  if (lines[i].name && lines[i].name.startsWith('Path ')) {
+                    lines[i].name = `Path ${i + 1}`;
+                  }
+                }
+                
+                lines = lines; // Trigger reactivity
+              }}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width={2}
+                class="size-5 stroke-blue-500"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                />
+              </svg>
+            </button>
+            {#if lines.length > 1}
+              <button
+                title="Remove Line"
+                on:click={() => {
+                  let _lns = lines;
+                  lines.splice(idx, 1);
+                  lines = _lns;
+                }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width={2}
+                  class="size-5 stroke-red-500"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                  />
+                </svg>
+              </button>
+            {/if}
+          </div>
+        </div>
+        <div class={`h-[0.75px] w-full`} style={`background: ${line.color}`} />
+        <div class="flex flex-col justify-start items-start">
+          <div class="font-light">End Point:</div>
+          <div class="flex flex-row justify-start items-center gap-2">
+            <div class="font-extralight">X:</div>
+            <input
+              class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-28"
+              step="0.1"
+              type="number"
+              min="0"
+              max="144"
+              bind:value={line.endPoint.x}
+            />
+            <div class="font-extralight">Y:</div>
+            <input
+              class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-28"
+              step="0.1"
+              min="0"
+              max="144"
+              type="number"
+              bind:value={line.endPoint.y}
+            />
+
+            <select
+              bind:value={line.endPoint.heading}
+              class=" rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-28 text-sm"
+              title="The heading style of the robot.
+With constant heading, the robot maintains the same heading throughout the line.
+With linear heading, heading changes linearly between given start and end angles.
+With tangential heading, the heading follows the direction of the line."
+            >
+              <option value="constant">Constant</option>
+              <option value="linear">Linear</option>
+              <option value="tangential">Tangential</option>
+            </select>
+
+            {#if line.endPoint.heading === "linear"}
+              <input
+                class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-14"
+                step="1"
+                type="number"
+                min="-180"
+                max="180"
+                bind:value={line.endPoint.startDeg}
+                title="The heading the robot starts this line at (in degrees)"
+              />
+              <input
+                class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-14"
+                step="1"
+                type="number"
+                min="-180"
+                max="180"
+                bind:value={line.endPoint.endDeg}
+                title="The heading the robot ends this line at (in degrees)"
+              />
+            {:else if line.endPoint.heading === "constant"}
+              <input
+                class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-14"
+                step="1"
+                type="number"
+                min="-180"
+                max="180"
+                bind:value={line.endPoint.degrees}
+                title="The constant heading the robot maintains throughout this line (in degrees)"
+              />
+            {:else if line.endPoint.heading === "tangential"}
+              <p class="text-sm font-extralight">Reverse:</p>
+              <input type="checkbox" bind:checked={line.endPoint.reverse} title="Reverse the direction the robot faces along the tangential path" />
+            {/if}
+          </div>
+          <div class="flex flex-row justify-start items-center gap-2 mt-1">
+            <div class="font-extralight">Wait:</div>
+            <input
+              class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-16"
+              step="0.1"
+              type="number"
+              min="0"
+              bind:value={line.waitTime}
+              placeholder="0"
+              title="Time in seconds to wait after reaching this point"
+            />
+            <div class="font-extralight text-xs">sec</div>
+          </div>
+        </div>
+        {#each line.controlPoints as point, idx1}
+          <div class="flex flex-col justify-start items-start">
+            <div class="font-light">Control Point {idx1 + 1}:</div>
+            <div class="flex flex-row justify-start items-center gap-2">
+              <div class="font-extralight">X:</div>
+              <input
+                class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-28"
+                step="0.1"
+                type="number"
+                bind:value={point.x}
+                min="0"
+                max="144"
+              />
+              <div class="font-extralight">Y:</div>
+              <input
+                class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-28"
+                step="0.1"
+                type="number"
+                bind:value={point.y}
+                min="0"
+                max="144"
+              />
+              <button
+                title="Remove Control Point"
+                on:click={() => {
+                  let _pts = line.controlPoints;
+                  _pts.splice(idx1, 1);
+                  line.controlPoints = _pts;
+                }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width={2}
+                  class="size-5 stroke-red-500"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/each}
+    <button
+      on:click={() => {
+        lines = [
+          ...lines,
+          {
+            name: `Path ${lines.length + 1}`,
+            endPoint: {
+              x: _.random(0, 144),
+              y: _.random(0, 144),
+              heading: "tangential",
+              reverse: false,
+            },
+            controlPoints: [],
+            color: getRandomColor(),
+          },
+        ];
+      }}
+      class="font-semibold text-green-500 text-sm flex flex-row justify-start items-center gap-1"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke-width={2}
+        stroke="currentColor"
+        class="size-5"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M12 4.5v15m7.5-7.5h-15"
+        />
+      </svg>
+      <p>Add Line</p>
+    </button>
+  </div>
+  <div
+    class="w-full bg-neutral-100 dark:bg-neutral-950 rounded-lg p-3 flex flex-col justify-start items-center gap-3 shadow-lg"
+  >
+    <!-- Speed Control - Above playbar -->
+    <div class="flex items-center gap-3 w-full">
+      <span class="text-xs font-medium text-neutral-600 dark:text-neutral-400">Speed</span>
+      <input
+        bind:value={playbackSpeed}
+        type="range"
+        min="0.25"
+        max="3"
+        step="0.25"
+        class="flex-1 h-2 appearance-none rounded-full bg-neutral-300 dark:bg-neutral-700 cursor-pointer slider-speed focus:outline-none"
+        title="Playback speed: {playbackSpeed}x"
+      />
+      <span class="text-xs font-bold text-blue-500 dark:text-blue-400 min-w-[2.5rem] text-right">{playbackSpeed}x</span>
+    </div>
+    
+    <!-- Playbar -->
+    <div class="flex flex-row w-full justify-start items-center gap-3">
+      <button
+        title="Play/Pause"
+        on:click={() => {
+          if (playing) {
+            pause();
+          } else {
+            play();
+          }
+        }}
+      >
+        {#if !playing}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke-width="2"
+            stroke="currentColor"
+            class="size-6 stroke-green-500"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"
+            />
+          </svg>
+        {:else}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke-width="2"
+            stroke="currentColor"
+            class="size-6 stroke-green-500"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M15.75 5.25v13.5m-7.5-13.5v13.5"
+            />
+          </svg>
+        {/if}
+      </button>
+      <div class="relative w-full h-5 flex items-center">
+        <input
+          bind:value={percent}
+          type="range"
+          min="0"
+          max="100"
+          step="0.000001"
+          class="w-full appearance-none slider focus:outline-none absolute inset-0"
+        />
+        <!-- Waypoint markers -->
+        {#each lines as line, idx}
+          <!-- Start point (only for first line) -->
+          {#if idx === 0}
+            <button
+              class="absolute w-3 h-3 rounded-full transform -translate-x-1/2 z-10 hover:scale-125 transition-transform border-2 border-white dark:border-neutral-800 shadow-sm"
+              style="left: 0%; background: {line.color};"
+              title="Start Point ({startPoint.x.toFixed(1)}, {startPoint.y.toFixed(1)})"
+              on:click={() => { percent = 0; }}
+            />
+          {/if}
+          <!-- End point of each line -->
+          <button
+            class="absolute w-3 h-3 rounded-full transform -translate-x-1/2 z-10 hover:scale-125 transition-transform border-2 border-white dark:border-neutral-800 shadow-sm"
+            style="left: {((idx + 1) / lines.length) * 100}%; background: {line.color};"
+            title="{line.name || `Path ${idx + 1}`} End ({line.endPoint.x.toFixed(1)}, {line.endPoint.y.toFixed(1)})"
+            on:click={() => { percent = ((idx + 1) / lines.length) * 100 - 0.000001; }}
+          />
+        {/each}
+      </div>
+    </div>
+  </div>
+</div>

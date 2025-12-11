@@ -1,0 +1,61 @@
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+.slider {
+  @apply dark:bg-neutral-950
+  [&::-webkit-slider-runnable-track]:rounded-full 
+  [&::-webkit-slider-runnable-track]:bg-black/10 
+  [&::-webkit-slider-runnable-track]:dark:bg-neutral-800
+  [&::-webkit-slider-runnable-track]:shadow-inner
+  [&::-webkit-slider-thumb]:appearance-none 
+  [&::-webkit-slider-thumb]:h-5 
+  [&::-webkit-slider-thumb]:w-5 
+  [&::-webkit-slider-thumb]:rounded-full 
+  [&::-webkit-slider-thumb]:bg-green-500;
+}
+
+.slider-speed {
+  @apply 
+  [&::-webkit-slider-runnable-track]:rounded-full 
+  [&::-webkit-slider-runnable-track]:bg-neutral-300
+  [&::-webkit-slider-runnable-track]:dark:bg-neutral-700
+  [&::-webkit-slider-runnable-track]:h-2
+  [&::-webkit-slider-thumb]:appearance-none 
+  [&::-webkit-slider-thumb]:h-4 
+  [&::-webkit-slider-thumb]:w-4 
+  [&::-webkit-slider-thumb]:rounded-full 
+  [&::-webkit-slider-thumb]:bg-blue-500
+  [&::-webkit-slider-thumb]:dark:bg-blue-400
+  [&::-webkit-slider-thumb]:shadow-md
+  [&::-webkit-slider-thumb]:cursor-pointer
+  [&::-webkit-slider-thumb]:mt-[-3px];
+}
+
+code.hljs {
+  @apply rounded-md max-h-[42rem] overflow-scroll;
+}
+
+@font-face {
+  font-family: 'Poppins';
+  src: url('/fonts/Poppins-ExtraLight.ttf') format('truetype');
+  font-weight: 200;
+}
+
+@font-face {
+  font-family: 'Poppins';
+  src: url('/fonts/Poppins-Light.ttf') format('truetype');
+  font-weight: 300;
+}
+
+@font-face {
+  font-family: 'Poppins';
+  src: url('/fonts/Poppins-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: 'Poppins';
+  src: url('/fonts/Poppins-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+}
