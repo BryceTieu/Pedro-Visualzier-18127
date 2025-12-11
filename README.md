@@ -2,7 +2,7 @@
 # Pedro Pathing Visualizer
 
 ## About
-This project is a fork and major extension of the original path visualizer by FRC Team 16166 Watt's Up. It is now maintained and enhanced by FTC Team 18127 All Hands on Tech (IM team 18127), with significant new features and improvements for the 2025-2026 season.
+This project is a fork and major extension of the original path visualizer by FRC Team 16166 Watt's Up. It is now maintained and enhanced by FTC Team 18127 All Hands on Tech, with significant new features and improvements for the 2025-2026 season.
 
 ## Credits
 - Original project by FRC Team 16166 Watt's Up
