@@ -1,4 +1,8 @@
 <script lang="ts">
+// Vite static asset import for gif.worker.js
+// @ts-ignore
+import workerUrl from './workers/gif.worker.js?url';
+let isGifExporting = false;
 // Map playbar percent (including waits) to robotPercent and wait state
 import { getRobotPercentAndWait } from './utils';
 
@@ -94,6 +98,7 @@ let activePathIndex: number = 0;
     endDeg: 180
   };
   let lines: Line[] = [
+
     {
       name: "Path 1",
       endPoint: { x: 56, y: 36, heading: "linear", startDeg: 90, endDeg: 180 },
@@ -101,6 +106,9 @@ let activePathIndex: number = 0;
       color: getRandomColor(),
     },
   ];
+
+// Ensure lines is always an array
+if (!Array.isArray(lines)) lines = [];
 
   
   function deletePath(index: number) {
@@ -335,6 +343,7 @@ let activePathIndex: number = 0;
         if (dx !== 0 || dy !== 0) {
           return -radiansToDegrees(Math.atan2(dy, dx));
         }
+        
         return 0;
       default:
         return 0;
@@ -371,8 +380,48 @@ let activePathIndex: number = 0;
     }
   }
 
-  // Reactive center line crossing detection (origin-based)
-  // Center line detection removed with collision path logic
+
+  // Center line crossing detection (robot corners)
+  // Precompute if any part of the path ever crosses the center line
+  $: centerLineWarning = (() => {
+    if (!$centerLineWarningEnabled) return false;
+    const steps = 100;
+    for (let i = 0; i <= steps; i++) {
+      const percent = (i / steps) * 100;
+      // Find robot position/heading at this percent
+      let totalLineProgress = (lines.length * Math.min(percent, 99.999999999)) / 100;
+      let currentLineIdx = Math.min(Math.trunc(totalLineProgress), lines.length - 1);
+      let currentLine = lines[currentLineIdx];
+      let linePercent = easeInOutQuad(totalLineProgress - Math.floor(totalLineProgress));
+      let _startPoint = currentLineIdx === 0 ? startPoint : lines[currentLineIdx - 1].endPoint;
+      let robotInchesXY = getCurvePoint(linePercent, [_startPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+      let heading = 0;
+      switch (currentLine.endPoint.heading) {
+        case "linear":
+          heading = -shortestRotation(currentLine.endPoint.startDeg ?? 0, currentLine.endPoint.endDeg ?? 0, linePercent);
+          break;
+        case "constant":
+          heading = -(currentLine.endPoint.degrees ?? 0);
+          break;
+        case "tangential":
+          const nextPointInches = getCurvePoint(linePercent + (currentLine.endPoint.reverse ? -0.01 : 0.01), [_startPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+          const dx = nextPointInches.x - robotInchesXY.x;
+          const dy = nextPointInches.y - robotInchesXY.y;
+          if (dx !== 0 || dy !== 0) {
+            heading = -radiansToDegrees(Math.atan2(dy, dx));
+          }
+          break;
+      }
+      const corners = getRobotCorners(robotInchesXY.x, robotInchesXY.y, robotWidth, robotHeight, heading);
+      let left = false, right = false;
+      for (const c of corners) {
+        if (c.x < 72) left = true;
+        if (c.x > 72) right = true;
+      }
+      if (left && right) return true;
+    }
+    return false;
+  })();
 
   $: points = (() => {
     let _points = [];
@@ -430,6 +479,7 @@ let activePathIndex: number = 0;
           pointElem.noStroke();
           _points.push(pointElem);
         }
+        
       });
     });
 
@@ -616,24 +666,31 @@ let activePathIndex: number = 0;
     return { x: posX, y: posY, heading };
   }
 
-  $: (() => {
-    if (!two) {
-      return;
-    }
-
-    two.renderer.domElement.style["z-index"] = "30";
-    two.renderer.domElement.style["position"] = "absolute";
-    two.renderer.domElement.style["top"] = "0px";
-    two.renderer.domElement.style["left"] = "0px";
-    two.renderer.domElement.style["width"] = "100%";
-    two.renderer.domElement.style["height"] = "100%";
-
-    two.clear();
+  function drawScene(
+    twoInstance: Two,
+    percentArg: number,
+    robotPercentArg: number,
+    x: d3.ScaleLinear<number, number, number>,
+    y: d3.ScaleLinear<number, number, number>,
+    robotXY: BasePoint,
+    robotHeading: number,
+    comparisonMode: boolean,
+    paths: RobotPath[],
+    activePathIndex: number,
+    path: (Path | PathLine)[],
+    points: any[],
+    startPoint: Point,
+    lines: Line[],
+    lineWidth: number,
+    pointRadius: number,
+    robotWidth: number,
+    robotHeight: number,
+    $showAllCollisions: boolean,
+    $collisionNextSegmentOnly: boolean
+  ) {
+    // --- Begin drawing logic ---
     // Draw robot origin marker (center) during animation
     if (robotXY) {
-      // ...existing code...
-      // Show coordinates and rotation, offset further right
-      // ...existing code...
       // By default, only show the robot collider at the next point
       // If showAllCollisions is enabled, show all static collision points
       if ($showAllCollisions) {
@@ -653,7 +710,7 @@ let activePathIndex: number = 0;
                 return -shortestRotation(staticLine.endPoint.startDeg, staticLine.endPoint.endDeg, staticLinePercent);
               case "constant":
                 return -staticLine.endPoint.degrees;
-              case "tangential":
+              case "tangential": {
                 const staticNextPointInches = getCurvePoint(staticLinePercent + (staticLine.endPoint.reverse ? -0.01 : 0.01), [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
                 const staticDx = staticNextPointInches.x - staticRobotInchesXY.x;
                 const staticDy = staticNextPointInches.y - staticRobotInchesXY.y;
@@ -661,62 +718,11 @@ let activePathIndex: number = 0;
                   return -radiansToDegrees(Math.atan2(staticDy, staticDx));
                 }
                 return 0;
+              }
               default:
                 return 0;
             }
           })();
-          // Compute corners
-          const staticAngleRad = (-staticHeading * Math.PI) / 180;
-          const staticCos = Math.cos(staticAngleRad);
-          const staticSin = Math.sin(staticAngleRad);
-          const staticHalfL = robotWidth / 2;
-          const staticHalfW = robotHeight / 2;
-          const staticCornersInches = [
-            { x: staticRobotInchesXY.x + staticHalfL * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + (-staticHalfW) * staticCos },
-            { x: staticRobotInchesXY.x + staticHalfL * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + staticHalfW * staticCos },
-            { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + staticHalfW * staticCos },
-            { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + (-staticHalfW) * staticCos }
-          ];
-          for (let j = 0; j < staticCornersInches.length; j++) {
-            const staticA = staticCornersInches[j];
-            const staticB = staticCornersInches[(j + 1) % staticCornersInches.length];
-            const staticEdge = new Two.Line(x(staticA.x), y(staticA.y), x(staticB.x), y(staticB.y));
-            staticEdge.stroke = staticColor;
-            staticEdge.linewidth = x(0.12);
-            staticEdge.id = `collider-static-${i}-${j}`;
-            two.add(staticEdge);
-          }
-        }
-      }
-      if ($collisionNextSegmentOnly) {
-        // Show all collision points between the robot's current position and the next path point
-        const staticLineIdx = Math.min(Math.trunc(percent / 100 * lines.length), lines.length - 1);
-        const staticLine = lines[staticLineIdx];
-        const staticStartPoint = staticLineIdx === 0 ? startPoint : lines[staticLineIdx - 1].endPoint;
-        const steps = 30;
-        for (let i = 0; i <= steps; i++) {
-          // Uniformly sample between the start and end of the current segment
-          const t = i / steps;
-          const staticRobotInchesXY = getCurvePoint(t, [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
-          let staticHeading = (() => {
-            switch (staticLine.endPoint.heading) {
-              case "linear":
-                return -shortestRotation(staticLine.endPoint.startDeg, staticLine.endPoint.endDeg, t);
-              case "constant":
-                return -staticLine.endPoint.degrees;
-              case "tangential":
-                const staticNextPointInches = getCurvePoint(t + (staticLine.endPoint.reverse ? -0.01 : 0.01), [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
-                const staticDx = staticNextPointInches.x - staticRobotInchesXY.x;
-                const staticDy = staticNextPointInches.y - staticRobotInchesXY.y;
-                if (staticDx !== 0 || staticDy !== 0) {
-                  return -radiansToDegrees(Math.atan2(staticDy, staticDx));
-                }
-                return 0;
-              default:
-                return 0;
-            }
-          })();
-          // Compute corners
           const staticAngleRad = (-staticHeading * Math.PI) / 180;
           const staticCos = Math.cos(staticAngleRad);
           const staticSin = Math.sin(staticAngleRad);
@@ -735,78 +741,76 @@ let activePathIndex: number = 0;
             staticEdge.stroke = 'rgba(0,200,255,0.7)';
             staticEdge.linewidth = x(0.18);
             staticEdge.id = `collider-next-${i}-${j}`;
-            two.add(staticEdge);
+            twoInstance.add(staticEdge);
           }
         }
       }
-      // If both toggles are off, do not render any collision points
-      // ...existing code...
-            // Compute corners in inches, then convert to pixels
-            const angleRad = (-robotHeading * Math.PI) / 180;
-            const cos = Math.cos(angleRad);
-            const sin = Math.sin(angleRad);
-            const halfL = robotWidth / 2;
-            const halfW = robotHeight / 2;
-            // Robot center in inches
-            const robotInchesXY = { x: x.invert(robotXY.x), y: y.invert(robotXY.y) };
-            // Rectangle corners (front-left, front-right, back-right, back-left) in inches
-            const cornersInches = [
-              { x: robotInchesXY.x + halfL * cos - (-halfW) * sin, y: robotInchesXY.y + halfL * sin + (-halfW) * cos }, // front-left
-              { x: robotInchesXY.x + halfL * cos - halfW * sin, y: robotInchesXY.y + halfL * sin + halfW * cos },       // front-right
-              { x: robotInchesXY.x + (-halfL) * cos - halfW * sin, y: robotInchesXY.y + (-halfL) * sin + halfW * cos }, // back-right
-              { x: robotInchesXY.x + (-halfL) * cos - (-halfW) * sin, y: robotInchesXY.y + (-halfL) * sin + (-halfW) * cos } // back-left
-            ];
-            // Draw lines from origin to each corner (convert both to pixels)
-            cornersInches.forEach((corner, idx) => {
-              const line = new Two.Line(robotXY.x, robotXY.y, x(corner.x), y(corner.y));
-              line.stroke = '#ff00ff';
-              line.linewidth = x(0.15);
-              line.id = `origin-to-corner-${idx}`;
-              two.add(line);
-            });
+      // Compute corners in inches, then convert to pixels
+      const angleRad = (-robotHeading * Math.PI) / 180;
+      const cos = Math.cos(angleRad);
+      const sin = Math.sin(angleRad);
+      const halfL = robotWidth / 2;
+      const halfW = robotHeight / 2;
+      // Robot center in inches
+      const robotInchesXY = { x: x.invert(robotXY.x), y: y.invert(robotXY.y) };
+      // Rectangle corners (front-left, front-right, back-right, back-left) in inches
+      const cornersInches = [
+        { x: robotInchesXY.x + halfL * cos - (-halfW) * sin, y: robotInchesXY.y + halfL * sin + (-halfW) * cos }, // front-left
+        { x: robotInchesXY.x + halfL * cos - halfW * sin, y: robotInchesXY.y + halfL * sin + halfW * cos },       // front-right
+        { x: robotInchesXY.x + (-halfL) * cos - halfW * sin, y: robotInchesXY.y + (-halfL) * sin + halfW * cos }, // back-right
+        { x: robotInchesXY.x + (-halfL) * cos - (-halfW) * sin, y: robotInchesXY.y + (-halfL) * sin + (-halfW) * cos } // back-left
+      ];
+      // Draw lines from origin to each corner (convert both to pixels)
+      cornersInches.forEach((corner, idx) => {
+        const line = new Two.Line(robotXY.x, robotXY.y, x(corner.x), y(corner.y));
+        line.stroke = '#ff00ff';
+        line.linewidth = x(0.15);
+        line.id = `origin-to-corner-${idx}`;
+        twoInstance.add(line);
+      });
 
-            // Draw facing direction arrow (0° is right, 180° is left)
-            const arrowLength = x(robotWidth * 0.9);
-            const arrowAngleRad = (robotHeading * Math.PI) / 180;
-            const arrowEndX = robotXY.x + Math.cos(arrowAngleRad) * arrowLength;
-            const arrowEndY = robotXY.y + Math.sin(arrowAngleRad) * arrowLength;
-            const arrow = new Two.Line(robotXY.x, robotXY.y, arrowEndX, arrowEndY);
-            arrow.stroke = '#ff6600';
-            arrow.linewidth = x(0.22);
-            arrow.id = 'robot-facing-arrow';
-            two.add(arrow);
-            // Arrowhead
-            const headLength = x(1.2);
-            const headAngle = Math.PI / 7;
-            const leftHeadX = arrowEndX - headLength * Math.cos(arrowAngleRad - headAngle);
-            const leftHeadY = arrowEndY - headLength * Math.sin(arrowAngleRad - headAngle);
-            const rightHeadX = arrowEndX - headLength * Math.cos(arrowAngleRad + headAngle);
-            const rightHeadY = arrowEndY - headLength * Math.sin(arrowAngleRad + headAngle);
-            const arrowHeadLeft = new Two.Line(arrowEndX, arrowEndY, leftHeadX, leftHeadY);
-            arrowHeadLeft.stroke = '#ff6600';
-            arrowHeadLeft.linewidth = x(0.18);
-            arrowHeadLeft.id = 'robot-facing-arrowhead-left';
-            two.add(arrowHeadLeft);
-            const arrowHeadRight = new Two.Line(arrowEndX, arrowEndY, rightHeadX, rightHeadY);
-            arrowHeadRight.stroke = '#ff6600';
-            arrowHeadRight.linewidth = x(0.18);
-            arrowHeadRight.id = 'robot-facing-arrowhead-right';
-            two.add(arrowHeadRight);
-            // Draw lines between corners to form the collider
-            for (let i = 0; i < cornersInches.length; i++) {
-              const a = cornersInches[i];
-              const b = cornersInches[(i + 1) % cornersInches.length];
-              const edge = new Two.Line(x(a.x), y(a.y), x(b.x), y(b.y));
-              edge.stroke = '#00ffff';
-              edge.linewidth = x(0.18);
-              edge.id = `collider-edge-${i}`;
-              two.add(edge);
-            }
+      // Draw facing direction arrow (0° is right, 180° is left)
+      const arrowLength = x(robotWidth * 0.9);
+      const arrowAngleRad = (robotHeading * Math.PI) / 180;
+      const arrowEndX = robotXY.x + Math.cos(arrowAngleRad) * arrowLength;
+      const arrowEndY = robotXY.y + Math.sin(arrowAngleRad) * arrowLength;
+      const arrow = new Two.Line(robotXY.x, robotXY.y, arrowEndX, arrowEndY);
+      arrow.stroke = '#ff6600';
+      arrow.linewidth = x(0.22);
+      arrow.id = 'robot-facing-arrow';
+      twoInstance.add(arrow);
+      // Arrowhead
+      const headLength = x(1.2);
+      const headAngle = Math.PI / 7;
+      const leftHeadX = arrowEndX - headLength * Math.cos(arrowAngleRad - headAngle);
+      const leftHeadY = arrowEndY - headLength * Math.sin(arrowAngleRad - headAngle);
+      const rightHeadX = arrowEndX - headLength * Math.cos(arrowAngleRad + headAngle);
+      const rightHeadY = arrowEndY - headLength * Math.sin(arrowAngleRad + headAngle);
+      const arrowHeadLeft = new Two.Line(arrowEndX, arrowEndY, leftHeadX, leftHeadY);
+      arrowHeadLeft.stroke = '#ff6600';
+      arrowHeadLeft.linewidth = x(0.18);
+      arrowHeadLeft.id = 'robot-facing-arrowhead-left';
+      twoInstance.add(arrowHeadLeft);
+      const arrowHeadRight = new Two.Line(arrowEndX, arrowEndY, rightHeadX, rightHeadY);
+      arrowHeadRight.stroke = '#ff6600';
+      arrowHeadRight.linewidth = x(0.18);
+      arrowHeadRight.id = 'robot-facing-arrowhead-right';
+      twoInstance.add(arrowHeadRight);
+      // Draw lines between corners to form the collider
+      for (let i = 0; i < cornersInches.length; i++) {
+        const a = cornersInches[i];
+        const b = cornersInches[(i + 1) % cornersInches.length];
+        const edge = new Two.Line(x(a.x), y(a.y), x(b.x), y(b.y));
+        edge.stroke = '#00ffff';
+        edge.linewidth = x(0.18);
+        edge.id = `collider-edge-${i}`;
+        twoInstance.add(edge);
+      }
       const originDot = new Two.Circle(robotXY.x, robotXY.y, x(0.7));
       originDot.fill = '#00ff00';
       originDot.noStroke();
       originDot.id = 'robot-origin-dot';
-      two.add(originDot);
+      twoInstance.add(originDot);
       // Show coordinates and rotation, offset further right
       const degrees = robotHeading ? robotHeading.toFixed(1) : '0';
       const originLabel = new Two.Text(
@@ -819,7 +823,7 @@ let activePathIndex: number = 0;
       originLabel.size = x(1.2);
       originLabel.noStroke();
       originLabel.id = 'robot-origin-label';
-      two.add(originLabel);
+      twoInstance.add(originLabel);
     }
 
     // In comparison mode, draw all visible paths
@@ -827,12 +831,10 @@ let activePathIndex: number = 0;
       paths.forEach((pathData, pathIdx) => {
         if (!pathData.visible) return;
         const isActive = pathIdx === activePathIndex;
-        
         // Draw lines for this path
         pathData.lines.forEach((line, idx) => {
           let _startPoint = idx === 0 ? pathData.startPoint : pathData.lines[idx - 1].endPoint;
           let lineElem: Path | PathLine;
-          
           if (line.controlPoints.length > 2) {
             const samples = 100;
             const cps = [_startPoint, ...line.controlPoints, line.endPoint];
@@ -859,33 +861,68 @@ let activePathIndex: number = 0;
           } else {
             lineElem = new Two.Line(x(_startPoint.x), y(_startPoint.y), x(line.endPoint.x), y(line.endPoint.y));
           }
-
           lineElem.id = `path-${pathIdx}-line-${idx + 1}`;
           lineElem.stroke = pathData.color;
           lineElem.linewidth = x(lineWidth);
           lineElem.opacity = isActive ? 1 : 0.5;
           lineElem.noFill();
-          two.add(lineElem);
+          twoInstance.add(lineElem);
         });
-        
         // Draw start point for this path
         if (isActive) {
           let startPointElem = new Two.Circle(x(pathData.startPoint.x), y(pathData.startPoint.y), x(pointRadius));
           startPointElem.id = `path-${pathIdx}-point-0`;
           startPointElem.fill = pathData.color;
           startPointElem.noStroke();
-          two.add(startPointElem);
+          twoInstance.add(startPointElem);
         }
       });
-      
       // Draw points only for active path
-      two.add(...points);
+      twoInstance.add(...points);
     } else {
       // Single path mode - original behavior
-      two.add(...path);
-      two.add(...points);
+      twoInstance.add(...path);
+      twoInstance.add(...points);
+    }
+    // --- End drawing logic ---
+  
+  }
+
+  $: (() => {
+    if (!two) {
+      return;
     }
 
+    two.renderer.domElement.style["z-index"] = "30";
+    two.renderer.domElement.style["position"] = "absolute";
+    two.renderer.domElement.style["top"] = "0px";
+    two.renderer.domElement.style["left"] = "0px";
+    two.renderer.domElement.style["width"] = "100%";
+    two.renderer.domElement.style["height"] = "100%";
+
+    two.clear();
+    drawScene(
+      two,
+      percent,
+      robotPercent,
+      x,
+      y,
+      robotXY,
+      robotHeading,
+      comparisonMode,
+      paths,
+      activePathIndex,
+      path,
+      points,
+      startPoint,
+      lines,
+      lineWidth,
+      pointRadius,
+      robotWidth,
+      robotHeight,
+      $showAllCollisions,
+      $collisionNextSegmentOnly
+    );
     two.update();
   })();
 
@@ -1014,53 +1051,404 @@ let activePathIndex: number = 0;
   let gifFps = 30; // Configurable FPS for GIF export
   
   async function captureGif(): Promise<void> {
-    if (!fieldContainer) return;
-    
+  let framesAdded = 0;
+
+    isGifExporting = true;
+    if (!fieldContainer) {
+      console.error('GIF Export: fieldContainer not found.');
+      return;
+    }
+
+    console.log('GIF Export: Starting export...');
     const wasPlaying = playing;
-    if (wasPlaying) pause();
-    
+    if (wasPlaying) {
+      console.log('GIF Export: Pausing playback for export.');
+      pause();
+    }
+
     const savedPercent = percent;
     const savedRobotPercent = robotPercent;
-    
-    // Calculate frames based on FPS and duration
-    const totalFrames = Math.round(totalPathDuration * gifFps);
+
+    // Always use 1x speed for GIF export, regardless of playbackSpeed
+    const exportPlaybackSpeed = 1;
+    const exportBasePathDuration = (100 * lines.length) / (0.65 * 0.1 * 1000);
+    const exportTotalWaitTime = lines.reduce((sum, line) => sum + (line.waitTime || 0), 0);
+    const exportTotalPathDuration = exportBasePathDuration + exportTotalWaitTime;
+    const exportMovementRatio = exportBasePathDuration / (exportBasePathDuration + exportTotalWaitTime);
+    const totalFrames = Math.round(exportTotalPathDuration * gifFps);
     const frameDelay = Math.round(1000 / gifFps); // ms per frame
-    
+    console.log(`GIF Export: totalFrames=${totalFrames}, frameDelay=${frameDelay}`);
+
+    // Create offscreen canvases and compositing canvas
+    const width = fieldContainer.clientWidth;
+    const height = fieldContainer.clientHeight;
+    const overlayCanvas = document.createElement('canvas');
+    overlayCanvas.width = width;
+    overlayCanvas.height = height;
+    overlayCanvas.style.display = 'none';
+    document.body.appendChild(overlayCanvas); // Attach overlay canvas to DOM (hidden)
+    const backgroundCanvas = document.createElement('canvas');
+    backgroundCanvas.width = width;
+    backgroundCanvas.height = height;
+    backgroundCanvas.style.display = 'none';
+    document.body.appendChild(backgroundCanvas);
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = width;
+    finalCanvas.height = height;
+    finalCanvas.style.display = 'none';
+    document.body.appendChild(finalCanvas);
+    console.log('GIF Export: Created overlay/background/final canvases and attached to DOM (hidden)', { width, height });
+
+    // Preload the field image and robot image before starting the export loop
+    // Try multiple field images for debugging (webp and fallback)
+    const viteBase = import.meta.env.BASE_URL || '/Pedro-Visualzier-18127/';
+    const fieldImagePaths = [
+      `${viteBase}fields/decode.webp`,
+      `${viteBase}fields/centerstage.webp`,
+      `${viteBase}fields/intothedeep.webp`
+    ];
+    let fieldImg = new Image();
+    fieldImg.crossOrigin = 'anonymous';
+    let fieldImageLoaded = false;
+    let fieldImageTried = 0;
+    let selectedFieldPath = null;
+    for (const path of fieldImagePaths) {
+      fieldImg = new Image();
+      fieldImg.crossOrigin = 'anonymous';
+      fieldImg.src = path;
+      await new Promise((resolve) => {
+        fieldImg.onload = () => {
+          fieldImageLoaded = true;
+          selectedFieldPath = path;
+          console.log('GIF Export: Field image loaded successfully:', path);
+          resolve(null);
+        };
+        fieldImg.onerror = (e) => {
+          fieldImageLoaded = false;
+          console.error('GIF Export: Failed to load field image for GIF export:', path, e);
+          resolve(null);
+        };
+        if (fieldImg.complete && fieldImg.naturalWidth !== 0) {
+          fieldImageLoaded = true;
+          resolve(null);
+        }
+      });
+      fieldImageTried++;
+      if (fieldImageLoaded) break;
+    }
+
+    // Preload the robot image (if any)
+    let robotImg: HTMLImageElement | null = null;
+    if (robotImageSrc) {
+      robotImg = new Image();
+      robotImg.crossOrigin = 'anonymous';
+      robotImg.src = robotImageSrc;
+      await new Promise((resolve) => {
+        robotImg!.onload = () => {
+          console.log('GIF Export: Robot image loaded for export.');
+          resolve(null);
+        };
+        robotImg!.onerror = (e) => {
+          console.warn('GIF Export: Failed to load robot image for export', e);
+          resolve(null);
+        };
+        if (robotImg && robotImg.complete && robotImg.naturalWidth !== 0) resolve(null);
+      });
+    }
+
+    // Create a new Two.js instance with canvas renderer
+    const twoExport = new Two({
+      width,
+      height,
+      type: Two.Types.canvas,
+      autostart: false,
+      domElement: overlayCanvas
+    });
+    // Do NOT call appendTo, since we're providing the canvas directly
+    console.log('GIF Export: Created Two.js canvas renderer (direct to canvas)');
+
+    // Build export-specific Two.js path and point primitives (do not reuse the main UI ones)
+    const exportPoints: any[] = (() => {
+      let _points: any[] = [];
+      let startPointElem = new Two.Circle(
+        x(startPoint.x),
+        y(startPoint.y),
+        x(pointRadius)
+      );
+      startPointElem.id = `point-0-0-export`;
+      startPointElem.fill = lines[0].color;
+      startPointElem.noStroke();
+      _points.push(startPointElem);
+      lines.forEach((line, idx) => {
+        [line.endPoint, ...line.controlPoints].forEach((point, idx1) => {
+          if (idx1 > 0) {
+            let pointGroup = new Two.Group();
+            pointGroup.id = `point-${idx + 1}-${idx1}-export`;
+
+            let pointElem = new Two.Circle(
+              x(point.x),
+              y(point.y),
+              x(pointRadius)
+            );
+            pointElem.id = `point-${idx + 1}-${idx1}-background-export`;
+            pointElem.fill = line.color;
+            pointElem.noStroke();
+
+            let pointText = new Two.Text(
+              `${idx1}`,
+              x(point.x),
+              y(point.y - 0.15),
+              x(pointRadius)
+            );
+            pointText.id = `point-${idx + 1}-${idx1}-text-export`;
+            pointText.size = x(1.55);
+            pointText.leading = 1;
+            pointText.family = "ui-sans-serif, system-ui, sans-serif";
+            pointText.alignment = "center";
+            pointText.baseline = "middle";
+            pointText.fill = "white";
+            pointText.noStroke();
+
+            pointGroup.add(pointElem, pointText);
+            _points.push(pointGroup);
+          } else {
+            let pointElem = new Two.Circle(
+              x(point.x),
+              y(point.y),
+              x(pointRadius)
+            );
+            pointElem.id = `point-${idx + 1}-${idx1}-export`;
+            pointElem.fill = line.color;
+            pointElem.noStroke();
+            _points.push(pointElem);
+          }
+        });
+      });
+      console.log('GIF Export: Created exportPoints count', _points.length);
+        console.log('GIF Export: Created exportPoints count', _points.length);
+        return _points;
+    })();
+
+    const exportPath: (Path | PathLine)[] = (() => {
+      let _path: (Path | PathLine)[] = [];
+      lines.forEach((line, idx) => {
+        let _startPoint = idx === 0 ? startPoint : lines[idx - 1].endPoint;
+        let lineElem: Path | PathLine;
+        if (line.controlPoints.length > 2) {
+          const samples = 100;
+          const cps = [_startPoint, ...line.controlPoints, line.endPoint];
+          let points = [new Two.Anchor(x(_startPoint.x), y(_startPoint.y), 0, 0, 0, 0, Two.Commands.move)];
+          for (let i = 1; i <= samples; ++i) {
+            const point = getCurvePoint(i / samples, cps);
+            points.push(new Two.Anchor(x(point.x), y(point.y), 0, 0, 0, 0, Two.Commands.line));
+          }
+          points.forEach((point) => (point.relative = false));
+          lineElem = new Two.Path(points);
+          lineElem.automatic = false;
+        } else if (line.controlPoints.length > 0) {
+          let cp1 = line.controlPoints[1]
+            ? line.controlPoints[0]
+            : quadraticToCubic(_startPoint, line.controlPoints[0], line.endPoint).Q1;
+          let cp2 =
+            line.controlPoints[1] ?? quadraticToCubic(_startPoint, line.controlPoints[0], line.endPoint).Q2;
+          let points = [
+            new Two.Anchor(x(_startPoint.x), y(_startPoint.y), x(_startPoint.x), y(_startPoint.y), x(cp1.x), y(cp1.y), Two.Commands.move),
+            new Two.Anchor(x(line.endPoint.x), y(line.endPoint.y), x(cp2.x), y(cp2.y), x(line.endPoint.x), y(line.endPoint.y), Two.Commands.curve),
+          ];
+          points.forEach((point) => (point.relative = false));
+          lineElem = new Two.Path(points);
+          lineElem.automatic = false;
+        } else {
+          lineElem = new Two.Line(x(_startPoint.x), y(_startPoint.y), x(line.endPoint.x), y(line.endPoint.y));
+        }
+        lineElem.id = `path-${idx}`;
+        lineElem.stroke = line.color;
+        lineElem.linewidth = x(lineWidth);
+        lineElem.opacity = 1;
+        lineElem.noFill();
+        _path.push(lineElem);
+      });
+      console.log('GIF Export: Created exportPath count', _path.length);
+        console.log('GIF Export: Created exportPath count', _path.length);
+        return _path;
+    })();
+
+      // NOTE: don't add shapes up front - drawScene will add them each frame to the twoExport instance
+
     // Create GIF encoder
+    let workerScriptPath = workerUrl;
     const gif = new GIF({
       workers: 4,
-      quality: 5, // Lower = better quality (1-20)
-      width: fieldContainer.clientWidth,
-      height: fieldContainer.clientHeight,
-      workerScript: '/gif.worker.js'
+      quality: 15, // Lower = better quality (1-20), 15 is much faster
+      width,
+      height,
+      workerScript: workerScriptPath
     });
-    
+    console.log('GIF Export: Created GIF encoder');
+
     try {
-      // Capture frames
       for (let i = 0; i <= totalFrames; i++) {
-        // Set percent for this frame
+
+        // For GIF export, use the same percent for both robot and collision overlays to keep them in sync
         percent = (i / totalFrames) * 100;
-        robotPercent = Math.min(percent / movementRatio, 99.999);
-        
-        // Wait for render (shorter delay for faster capture)
-        await new Promise(resolve => setTimeout(resolve, 16));
-        
-        // Capture frame
-        const canvas = await html2canvas(fieldContainer, {
-          backgroundColor: null,
-          scale: 1,
-          logging: false,
-          useCORS: true
-        });
-        
-        gif.addFrame(canvas, { delay: frameDelay, copy: true });
-        
+        robotPercent = percent;
+
+        // Compute robotXY and robotHeading for this frame
+        let effectivePercent = typeof robotPercent !== 'undefined' ? robotPercent : percent;
+        let totalLineProgress = (lines.length * Math.min(effectivePercent, 99.999999999)) / 100;
+        let currentLineIdx = Math.min(Math.trunc(totalLineProgress), lines.length - 1);
+        let currentLine = lines[currentLineIdx];
+        let linePercent = easeInOutQuad(totalLineProgress - Math.floor(totalLineProgress));
+        let _startPoint = currentLineIdx === 0 ? startPoint : lines[currentLineIdx - 1].endPoint;
+        let robotInchesXY = getCurvePoint(linePercent, [_startPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+        let frameRobotXY = { x: x(robotInchesXY.x), y: y(robotInchesXY.y) };
+        let frameRobotHeading = 0;
+        switch (currentLine.endPoint.heading) {
+          case "linear":
+            frameRobotHeading = -shortestRotation(
+              currentLine.endPoint.startDeg,
+              currentLine.endPoint.endDeg,
+              linePercent
+            );
+            break;
+          case "constant":
+            frameRobotHeading = -currentLine.endPoint.degrees;
+            break;
+          case "tangential":
+            const nextPointInches = getCurvePoint(
+              linePercent + (currentLine.endPoint.reverse ? -0.01 : 0.01),
+              [_startPoint, ...currentLine.controlPoints, currentLine.endPoint]
+            );
+            const nextPoint = { x: x(nextPointInches.x), y: y(nextPointInches.y) };
+            const dx = nextPoint.x - frameRobotXY.x;
+            const dy = nextPoint.y - frameRobotXY.y;
+            if (dx !== 0 || dy !== 0) {
+              frameRobotHeading = -radiansToDegrees(Math.atan2(dy, dx));
+            }
+            break;
+        }
+
+        // Clear the canvas and Two.js scene
+        twoExport.clear();
+
+        // Render the field image as a Two.js Image added to the export scene, or fallback to a neutral background
+        let twoFieldImage = null;
+        if (fieldImageLoaded && fieldImg) {
+          try {
+            // Draw field image onto background canvas per-frame
+            const bgCtx = backgroundCanvas.getContext('2d');
+            if (bgCtx) {
+              bgCtx.clearRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+              bgCtx.drawImage(fieldImg, 0, 0, backgroundCanvas.width, backgroundCanvas.height);
+            }
+            console.log('GIF Export: Drew field image into background canvas', { path: selectedFieldPath });
+          } catch (e) {
+            console.error('GIF Export: Failed to draw field image to background canvas', e);
+          }
+        } else {
+          // If no field image available, clear with a neutral color to make missing field visible in exported frames
+            const ctx = backgroundCanvas.getContext('2d');
+          if (ctx) {
+              ctx.clearRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+              ctx.fillStyle = '#dddddd';
+              ctx.fillRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+            console.warn('GIF Export: No field image loaded; filled with neutral background for export.');
+          }
+        }
+          // Debug: log per-frame info
+          console.log(`GIF Export: Frame ${i+1}/${totalFrames+1} - fieldLoaded=${fieldImageLoaded} path=${selectedFieldPath}`);
+          // Draw overlays/robot and update two.js
+          try {
+            drawScene(
+              twoExport,
+              percent,
+              robotPercent,
+              x,
+              y,
+              frameRobotXY,
+              frameRobotHeading,
+              comparisonMode,
+              paths,
+              activePathIndex,
+              exportPath,
+              exportPoints,
+              startPoint,
+              lines,
+              lineWidth,
+              pointRadius,
+              robotWidth,
+              robotHeight,
+              $showAllCollisions,
+              $collisionNextSegmentOnly
+            );
+            twoExport.update();
+            // Compose background + overlay to final canvas
+            try {
+              const finalCtx = finalCanvas.getContext('2d');
+              const overlayCtx = overlayCanvas.getContext('2d');
+              const bgCtx = backgroundCanvas.getContext('2d');
+              if (finalCtx) {
+                finalCtx.clearRect(0, 0, finalCanvas.width, finalCanvas.height);
+                if (bgCtx) finalCtx.drawImage(backgroundCanvas, 0, 0);
+                if (overlayCtx) finalCtx.drawImage(overlayCanvas, 0, 0);
+              }
+            } catch (e) {
+              console.error('GIF Export: Failed to composite final canvas', e);
+            }
+            const ctxDebug = finalCanvas.getContext('2d');
+            // Compose robot image onto overlay canvas so it appears above the Two.js shapes
+            try {
+              const overlayCtx = overlayCanvas.getContext('2d');
+              if (overlayCtx && robotImg && robotImg.naturalWidth) {
+                // Robot pixel dimensions (converted from field inches to pixels)
+                const robotW = x(robotWidth);
+                const robotH = x(robotHeight);
+                overlayCtx.drawImage(robotImg, frameRobotXY.x - robotW / 2, frameRobotXY.y - robotH / 2, robotW, robotH);
+                console.log('GIF Export: Drew robot image to overlay', { x: frameRobotXY.x, y: frameRobotXY.y, w: robotW, h: robotH });
+              }
+            } catch (e) {
+              console.warn('GIF Export: Failed to draw robot image on overlay', e);
+            }
+            if (ctxDebug) {
+              try {
+                const px = ctxDebug.getImageData(Math.floor(width / 2), Math.floor(height / 2), 1, 1).data;
+                console.log('GIF Export: center pixel RGBA', px);
+                if (i === 0 && px[3] === 0) {
+                  try {
+                    const snapshot = finalCanvas.toDataURL('image/png');
+                    console.log('GIF Export: finalCanvas snapshot dataURL (first frame):', snapshot.substring(0, 200) + '...');
+                  } catch (e) {
+                    console.warn('GIF Export: Could not create finalCanvas dataURL snapshot', e);
+                  }
+                }
+              } catch (e) {
+                console.warn('GIF Export: Could not read center pixel (canvas may be tainted):', e);
+              }
+            }
+            gif.addFrame(finalCanvas, { delay: frameDelay, copy: true });
+            framesAdded++;
+          } catch (err) {
+            console.error('GIF Export: Failed to render frame or add to GIF', err);
+          }
         gifRecordingProgress = Math.round((i / totalFrames) * 100);
+        await Promise.resolve(); // allow Svelte to update UI
+        if (i % 10 === 0 || i === totalFrames) {
+          console.log(`GIF Export: Added frame ${i + 1} / ${totalFrames + 1}`);
+        }
       }
-      
-      // Render GIF
+
+      let gifFinished = false;
+      let gifTimeout: ReturnType<typeof setTimeout>;
       gif.on('finished', (blob: Blob) => {
-        // Download the GIF
+        console.log('GIF Export: gif.on("finished") event fired.');
+        gifFinished = true;
+        isGifExporting = false;
+        if (framesAdded === 0) {
+          console.error('GIF Export: No frames were added. Export failed.');
+          alert('GIF export failed: No frames were added.');
+          return;
+        }
+        console.log('GIF Export: Finished encoding, starting download.');
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -1069,15 +1457,72 @@ let activePathIndex: number = 0;
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        console.log('GIF Export: Download triggered.');
+        clearTimeout(gifTimeout);
       });
+
+      // Timeout fallback: alert if GIF export takes too long
+      gifTimeout = setTimeout(() => {
+        if (!gifFinished) {
+          isGifExporting = false;
+          console.error('GIF Export: Timed out waiting for GIF to finish.');
+          alert('GIF export timed out. This may be due to a browser or memory issue. Try reducing the number of frames or closing other tabs.');
+        }
+      }, 60000); // 60 seconds
+
+      gif.on('abort', () => {
+        console.log('GIF Export: gif.on("abort") event fired.');
+        isGifExporting = false;
+        console.error('GIF Export: Encoding aborted.');
+      });
+      gif.on('error', (err: any) => {
+        console.log('GIF Export: gif.on("error") event fired.', err);
+        isGifExporting = false;
+        console.error('GIF Export: Encoding error:', err);
+      });
+
+      console.log('GIF Export: About to call gif.render().');
+      console.log('GIF Export: gif.workerScript =', (import.meta.env.BASE_URL || '/') + 'gif.worker.js');
+      console.log('GIF Export: gif object:', gif);
+      // Check if the worker script is accessible
+      fetch((import.meta.env.BASE_URL || '/') + 'gif.worker.js')
+        .then(r => {
+          if (!r.ok) {
+            console.error('GIF Export: gif.worker.js not found or not accessible!', r.status);
+          } else {
+            console.log('GIF Export: gif.worker.js is accessible.');
+          }
+        })
+        .catch(e => {
+          console.error('GIF Export: Error fetching gif.worker.js', e);
+        });
       
-      gif.render();
-      
+      console.log('GIF Export: Starting GIF render...');
+      if (framesAdded > 0) {
+        gif.render();
+      } else {
+        console.error('GIF Export: No frames to render. Skipping gif.render().');
+        alert('GIF export failed: No frames to render.');
+      }
+
     } finally {
-      // Restore state
       percent = savedPercent;
       robotPercent = savedRobotPercent;
       if (wasPlaying) play();
+      isGifExporting = false;
+      if (overlayCanvas && overlayCanvas.parentNode) {
+        overlayCanvas.parentNode.removeChild(overlayCanvas);
+        console.log('GIF Export: Overlay canvas removed from DOM.');
+      }
+      if (backgroundCanvas && backgroundCanvas.parentNode) {
+        backgroundCanvas.parentNode.removeChild(backgroundCanvas);
+        console.log('GIF Export: Background canvas removed from DOM.');
+      }
+      if (finalCanvas && finalCanvas.parentNode) {
+        finalCanvas.parentNode.removeChild(finalCanvas);
+        console.log('GIF Export: Final canvas removed from DOM.');
+      }
+      console.log('GIF Export: State restored after export.');
     }
   }
   
@@ -1394,7 +1839,8 @@ let activePathIndex: number = 0;
   });
 
   function saveFile() {
-    const jsonString = JSON.stringify({ startPoint, lines});
+    // Save robot size in export, but not in code display
+    const jsonString = JSON.stringify({ startPoint, lines, robotWidth, robotHeight });
 
     const blob = new Blob([jsonString], { type: "application/json" });
 
@@ -1428,11 +1874,15 @@ let activePathIndex: number = 0;
           const jsonObj: {
             startPoint: Point;
             lines: Line[];
+            robotWidth?: number;
+            robotHeight?: number;
             shapes?: Shape[];
           } = JSON.parse(result);
 
           startPoint = jsonObj.startPoint;
           lines = jsonObj.lines;
+          if (typeof jsonObj.robotWidth === 'number') robotWidth = jsonObj.robotWidth;
+          if (typeof jsonObj.robotHeight === 'number') robotHeight = jsonObj.robotHeight;
         } catch (err) {
           console.error(err);
         }
@@ -1476,14 +1926,17 @@ let activePathIndex: number = 0;
 
   function addNewLine() {
     saveToHistory(); // Save state before making change
+    let prev = lines[lines.length - 1]?.endPoint;
+    let prevEndDeg = (prev && (prev.heading === 'linear' ? prev.endDeg : prev.heading === 'constant' ? prev.degrees : 0)) || 0;
     lines = [
       ...lines,
       {
         endPoint: {
           x: _.random(36, 108),
           y: _.random(36, 108),
-          heading: "tangential",
-          reverse: true,
+          heading: "linear",
+          startDeg: prevEndDeg,
+          endDeg: prevEndDeg,
         } as Point,
         controlPoints: [],
         color: getRandomColor(),
@@ -1548,9 +2001,27 @@ $: canRedo = redoStack.length > 0;
 
 </script>
 
+
 <Navbar bind:lines bind:startPoint bind:settings bind:robotWidth bind:robotHeight bind:percent bind:gifFps {saveFile} {loadFile} {loadRobot} {undo} {redo} {canUndo} {canRedo} {captureGif}/>
 
-<!-- Center Line Crossing Warning -->
+{#if centerLineWarning}
+  <div class="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-red-600 text-white px-6 py-2 rounded-lg shadow-lg border-2 border-red-800 font-bold text-lg animate-pulse">
+    ⚠️ Path crosses center line!
+  </div>
+{/if}
+
+{#if isGifExporting}
+  <div style="position:fixed;top:0;left:0;width:100vw;z-index:9999;background:rgba(30,30,30,0.95);height:38px;display:flex;align-items:center;justify-content:center;transition:opacity 0.2s;">
+    <div style="width:60vw;max-width:600px;background:#222;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px #0003;">
+      <div style="height:18px;width:100%;background:#444;">
+        <div style="height:100%;background:#4fd1c5;transition:width 0.2s;width: {gifRecordingProgress}%;"></div>
+      </div>
+      <div style="color:#fff;font-size:13px;padding:2px 12px 2px 12px;text-align:center;letter-spacing:0.5px;">
+        Exporting GIF... {gifRecordingProgress}%
+      </div>
+    </div>
+  </div>
+{/if}
 
 <div
   class="w-screen h-screen pt-16 pb-2 px-2 flex flex-row justify-center items-stretch gap-2 overflow-hidden"
@@ -1603,7 +2074,7 @@ $: canRedo = redoStack.length > 0;
               </svg>
             {:else}
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-40">
-                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                <path d="M17.94 17.94A10.07 10.07 0 0  1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
                 <line x1="1" y1="1" x2="23" y2="23"></line>
               </svg>
             {/if}

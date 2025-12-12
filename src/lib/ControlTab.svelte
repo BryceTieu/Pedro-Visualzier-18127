@@ -1,4 +1,19 @@
 <script lang="ts">
+    // Helper to create a valid 'linear' Point
+    function makeLinearPoint(
+      x: number,
+      y: number,
+      startDeg: number,
+      endDeg: number
+    ): BasePoint & { heading: "linear"; startDeg: number; endDeg: number; degrees?: never; reverse?: never } {
+      return {
+        x,
+        y,
+        heading: 'linear',
+        startDeg,
+        endDeg
+      };
+    }
     function makeTangentialPoint(x: number, y: number, reverse: boolean = false): Point {
       return {
         x,
@@ -186,24 +201,30 @@
                 const newEndY = idx < lines.length - 1 
                   ? (currentEnd.y + lines[idx + 1].endPoint.y) / 2 
                   : _.random(0, 144);
-                
+
+
+                // Prefill angles from previous endpoint
+                let prevEndDeg = (currentEnd.heading === 'linear' ? currentEnd.endDeg : currentEnd.heading === 'constant' ? currentEnd.degrees : 0) || 0;
+                const newEndPoint = makeLinearPoint(newEndX, newEndY, prevEndDeg, prevEndDeg);
                 const newLine = {
                   name: `Path ${idx + 2}`,
-                  endPoint: makeTangentialPoint(newEndX, newEndY, false),
+                  endPoint: newEndPoint,
                   controlPoints: [],
                   color: getRandomColor(),
                 };
-                
+
                 // Insert the new line after the current one
+
                 lines.splice(idx + 1, 0, newLine);
-                
+
                 // Update names for subsequent paths
+
                 for (let i = idx + 2; i < lines.length; i++) {
-                  if (lines[i] && lines[i].name && lines[i].name.startsWith('Path ')) {
+                  if (lines[i] && typeof lines[i].name === 'string' && lines[i].name.startsWith('Path ')) {
                     lines[i].name = `Path ${i + 1}`;
                   }
                 }
-                
+
                 lines = lines; // Trigger reactivity
               }}
             >
