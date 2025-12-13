@@ -2114,34 +2114,25 @@ $: canRedo = redoStack.length > 0;
   </div>
 {/if}
 
-<div
-  class="w-screen h-screen pt-16 pb-2 px-2 flex flex-row justify-center items-stretch gap-2 overflow-hidden"
->
-  <!-- Left path selector removed per request -->
-
-  <div class="flex h-full justify-center items-center flex-shrink-0">
-    <div
-      bind:this={fieldContainer}
-      class="h-full max-h-[calc(100vh-5rem)] aspect-square relative"
-    >
-      <div
-        bind:this={twoElement}
-        class="w-full h-full rounded-lg shadow-md bg-neutral-50 dark:bg-neutral-900 relative overflow-visible"
-      >
+<div class="w-screen h-screen pt-16 pb-2 px-0 flex flex-row items-stretch overflow-hidden">
+  <!-- LEFT: Field — flush to left, square sized by viewport height -->
+  <div class="flex-shrink-0" style="height:calc(100vh - 4rem); width:calc(100vh - 4rem);">
+    <div bind:this={fieldContainer} class="h-full w-full relative">
+      <div bind:this={twoElement} class="w-full h-full bg-transparent relative overflow-visible">
         <img
           src="/Pedro-Visualzier-18127/fields/decode.webp"
           alt="Field"
-          class="absolute top-0 left-0 w-full h-full rounded-lg z-10 pointer-events-none"
+          class="absolute top-0 left-0 w-full h-full z-10 pointer-events-none"
         />
         <MathTools {x} {y} {twoElement} {robotXY} />
-        
+
         <!-- Primary Robot (active path) -->
         <img
           src={robotImageSrc}
           alt="Robot"
           style={`position: absolute; top: ${robotXY.y}px; left: ${robotXY.x}px; transform: translate(-50%, -50%) rotate(${robotHeading}deg); z-index: 20; width: ${x(robotWidth)}px; height: ${x(robotHeight)}px; object-fit: fill;`}
         />
-        
+
         <!-- Comparison mode: render ghost robots for other visible paths -->
         {#if comparisonMode}
           {#each paths as otherPath, idx}
@@ -2161,20 +2152,26 @@ $: canRedo = redoStack.length > 0;
       </div>
     </div>
   </div>
-  <ControlTab
-    bind:playing
-    {play}
-    {pause}
-    bind:startPoint
-    bind:lines
-    bind:robotWidth
-    bind:robotHeight
-    bind:settings
-    bind:percent
-    bind:robotXY
-    bind:robotHeading
-    bind:playbackSpeed
-    {x}
-    {y}
-  />
- </div>
+
+  <!-- RIGHT: Controls / panels — fill remaining space -->
+  <div class="flex-1 overflow-auto p-4">
+    <div class="ui-shrink">
+      <ControlTab
+        bind:playing
+        {play}
+        {pause}
+        bind:startPoint
+        bind:lines
+        bind:robotWidth
+        bind:robotHeight
+        bind:settings
+        bind:percent
+        bind:robotXY
+        bind:robotHeading
+        bind:playbackSpeed
+        {x}
+        {y}
+      />
+    </div>
+  </div>
+</div>
