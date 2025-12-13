@@ -41,8 +41,8 @@ let activePathIndex: number = 0;
     shortestRotation,
   } from "./utils";
   import hotkeys from 'hotkeys-js';
-  import { clickToPlaceMode, centerLineWarningEnabled, collisionNextSegmentOnly, showCornerDots, colliderTrailColorMode } from "./stores";
-    import { showAllCollisions } from "./stores";
+  import { clickToPlaceMode, centerLineWarningEnabled, collisionNextSegmentOnly, showCornerDots, colliderTrailColorMode, showRobotCollisionOverlays, showRobotLiveCoordinates, showRobotOriginToCornerLines, showRobotColliderEdges } from "./stores";
+  import { showAllCollisions } from "./stores";
   import { get } from 'svelte/store';
   import html2canvas from "html2canvas";
   import GIF from "gif.js";
@@ -693,29 +693,93 @@ if (!Array.isArray(lines)) lines = [];
     if (robotXY) {
       // By default, only show the robot collider at the next point
       // If showAllCollisions is enabled, show all static collision points
-      if ($showAllCollisions) {
-        const staticSteps = 60;
+      if ($showAllCollisions && lines.length > 0) {
+        // Sample N points per segment for better coverage
+        const samplesPerSegment = 20;
         const staticColor = 'rgba(0,200,255,0.3)';
-        for (let i = 0; i <= staticSteps; i++) {
-          const staticPercent = (i / staticSteps) * 100;
-          let staticLineProgress = (lines.length * Math.min(staticPercent, 99.999)) / 100;
-          let staticLineIdx = Math.min(Math.trunc(staticLineProgress), lines.length - 1);
-          let staticLine = lines[staticLineIdx];
-          let staticLinePercent = easeInOutQuad(staticLineProgress - Math.floor(staticLineProgress));
-          let staticStartPoint = staticLineIdx === 0 ? startPoint : lines[staticLineIdx - 1].endPoint;
-          let staticRobotInchesXY = getCurvePoint(staticLinePercent, [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
-          let staticHeading = (() => {
-            switch (staticLine.endPoint.heading) {
+        for (let seg = 0; seg < lines.length; seg++) {
+          let staticLine = lines[seg];
+          let staticStartPoint = seg === 0 ? startPoint : lines[seg - 1].endPoint;
+          for (let i = 0; i < samplesPerSegment; i++) {
+            const t = i / samplesPerSegment;
+            let staticLinePercent = easeInOutQuad(t);
+            let staticRobotInchesXY = getCurvePoint(staticLinePercent, [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
+            let staticHeading = (() => {
+              switch (staticLine.endPoint.heading) {
+                case "linear":
+                  return -shortestRotation(
+                    staticLine.endPoint.startDeg ?? 0,
+                    staticLine.endPoint.endDeg ?? 0,
+                    staticLinePercent
+                  );
+                case "constant":
+                  return -staticLine.endPoint.degrees;
+                case "tangential": {
+                  const staticNextPointInches = getCurvePoint(staticLinePercent + (staticLine.endPoint.reverse ? -0.01 : 0.01), [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
+                  const staticDx = staticNextPointInches.x - staticRobotInchesXY.x;
+                  const staticDy = staticNextPointInches.y - staticRobotInchesXY.y;
+                  if (staticDx !== 0 || staticDy !== 0) {
+                    return -radiansToDegrees(Math.atan2(staticDy, staticDx));
+                  }
+                  return 0;
+                }
+                default:
+                  return 0;
+              }
+            })();
+            const staticAngleRad = (-staticHeading * Math.PI) / 180;
+            const staticCos = Math.cos(staticAngleRad);
+            const staticSin = Math.sin(staticAngleRad);
+            const staticHalfL = robotWidth / 2;
+            const staticHalfW = robotHeight / 2;
+            const staticCornersInches = [
+              { x: staticRobotInchesXY.x + staticHalfL * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + (-staticHalfW) * staticCos },
+              { x: staticRobotInchesXY.x + staticHalfL * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + staticHalfW * staticCos },
+              { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + staticHalfW * staticCos },
+              { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + (-staticHalfW) * staticCos }
+            ];
+            for (let j = 0; j < staticCornersInches.length; j++) {
+              const staticA = staticCornersInches[j];
+              const staticB = staticCornersInches[(j + 1) % staticCornersInches.length];
+              const staticEdge = new Two.Line(x(staticA.x), y(staticA.y), x(staticB.x), y(staticB.y));
+              staticEdge.stroke = 'rgba(0,200,255,0.7)';
+              staticEdge.linewidth = x(0.18);
+              staticEdge.id = `collider-all-${seg}-${i}-${j}`;
+              twoInstance.add(staticEdge);
+            }
+          }
+        }
+      }
+
+      // If current segment only is enabled, show overlays for the current segment
+      if ($collisionNextSegmentOnly && lines.length > 0) {
+        // Find current segment index (assume robotXY is on the current segment)
+        // We'll use percentArg to determine where the robot is
+        let totalLineProgress = (lines.length * Math.min(percentArg, 99.999999999)) / 100;
+        let currentLineIdx = Math.min(Math.trunc(totalLineProgress), lines.length - 1);
+        let currentLine = lines[currentLineIdx];
+        let currentStartPoint = currentLineIdx === 0 ? startPoint : lines[currentLineIdx - 1].endPoint;
+        const samplesPerSegment = 20;
+        for (let i = 0; i < samplesPerSegment; i++) {
+          const t = i / samplesPerSegment;
+          let segPercent = easeInOutQuad(t);
+          let segRobotInchesXY = getCurvePoint(segPercent, [currentStartPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+          let segHeading = (() => {
+            switch (currentLine.endPoint.heading) {
               case "linear":
-                return -shortestRotation(staticLine.endPoint.startDeg, staticLine.endPoint.endDeg, staticLinePercent);
+                return -shortestRotation(
+                  currentLine.endPoint.startDeg ?? 0,
+                  currentLine.endPoint.endDeg ?? 0,
+                  segPercent
+                );
               case "constant":
-                return -staticLine.endPoint.degrees;
+                return -currentLine.endPoint.degrees;
               case "tangential": {
-                const staticNextPointInches = getCurvePoint(staticLinePercent + (staticLine.endPoint.reverse ? -0.01 : 0.01), [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
-                const staticDx = staticNextPointInches.x - staticRobotInchesXY.x;
-                const staticDy = staticNextPointInches.y - staticRobotInchesXY.y;
-                if (staticDx !== 0 || staticDy !== 0) {
-                  return -radiansToDegrees(Math.atan2(staticDy, staticDx));
+                const segNextPointInches = getCurvePoint(segPercent + (currentLine.endPoint.reverse ? -0.01 : 0.01), [currentStartPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+                const segDx = segNextPointInches.x - segRobotInchesXY.x;
+                const segDy = segNextPointInches.y - segRobotInchesXY.y;
+                if (segDx !== 0 || segDy !== 0) {
+                  return -radiansToDegrees(Math.atan2(segDy, segDx));
                 }
                 return 0;
               }
@@ -723,25 +787,25 @@ if (!Array.isArray(lines)) lines = [];
                 return 0;
             }
           })();
-          const staticAngleRad = (-staticHeading * Math.PI) / 180;
-          const staticCos = Math.cos(staticAngleRad);
-          const staticSin = Math.sin(staticAngleRad);
-          const staticHalfL = robotWidth / 2;
-          const staticHalfW = robotHeight / 2;
-          const staticCornersInches = [
-            { x: staticRobotInchesXY.x + staticHalfL * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + (-staticHalfW) * staticCos },
-            { x: staticRobotInchesXY.x + staticHalfL * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + staticHalfW * staticCos },
-            { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + staticHalfW * staticCos },
-            { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + (-staticHalfW) * staticCos }
+          const segAngleRad = (-segHeading * Math.PI) / 180;
+          const segCos = Math.cos(segAngleRad);
+          const segSin = Math.sin(segAngleRad);
+          const segHalfL = robotWidth / 2;
+          const segHalfW = robotHeight / 2;
+          const segCornersInches = [
+            { x: segRobotInchesXY.x + segHalfL * segCos - (-segHalfW) * segSin, y: segRobotInchesXY.y + segHalfL * segSin + (-segHalfW) * segCos },
+            { x: segRobotInchesXY.x + segHalfL * segCos - segHalfW * segSin, y: segRobotInchesXY.y + segHalfL * segSin + segHalfW * segCos },
+            { x: segRobotInchesXY.x + (-segHalfL) * segCos - segHalfW * segSin, y: segRobotInchesXY.y + (-segHalfL) * segSin + segHalfW * segCos },
+            { x: segRobotInchesXY.x + (-segHalfL) * segCos - (-segHalfW) * segSin, y: segRobotInchesXY.y + (-segHalfL) * segSin + (-segHalfW) * segCos }
           ];
-          for (let j = 0; j < staticCornersInches.length; j++) {
-            const staticA = staticCornersInches[j];
-            const staticB = staticCornersInches[(j + 1) % staticCornersInches.length];
-            const staticEdge = new Two.Line(x(staticA.x), y(staticA.y), x(staticB.x), y(staticB.y));
-            staticEdge.stroke = 'rgba(0,200,255,0.7)';
-            staticEdge.linewidth = x(0.18);
-            staticEdge.id = `collider-next-${i}-${j}`;
-            twoInstance.add(staticEdge);
+          for (let j = 0; j < segCornersInches.length; j++) {
+            const segA = segCornersInches[j];
+            const segB = segCornersInches[(j + 1) % segCornersInches.length];
+            const segEdge = new Two.Line(x(segA.x), y(segA.y), x(segB.x), y(segB.y));
+            segEdge.stroke = 'rgba(255,0,0,0.7)';
+            segEdge.linewidth = x(0.18);
+            segEdge.id = `collider-current-${currentLineIdx}-${i}-${j}`;
+            twoInstance.add(segEdge);
           }
         }
       }
@@ -760,16 +824,56 @@ if (!Array.isArray(lines)) lines = [];
         { x: robotInchesXY.x + (-halfL) * cos - halfW * sin, y: robotInchesXY.y + (-halfL) * sin + halfW * cos }, // back-right
         { x: robotInchesXY.x + (-halfL) * cos - (-halfW) * sin, y: robotInchesXY.y + (-halfL) * sin + (-halfW) * cos } // back-left
       ];
-      // Draw lines from origin to each corner (convert both to pixels)
-      cornersInches.forEach((corner, idx) => {
-        const line = new Two.Line(robotXY.x, robotXY.y, x(corner.x), y(corner.y));
-        line.stroke = '#ff00ff';
-        line.linewidth = x(0.15);
-        line.id = `origin-to-corner-${idx}`;
-        twoInstance.add(line);
-      });
+      // Draw robot overlays (split into independent toggles)
+      if (get(showRobotOriginToCornerLines)) {
+        // Draw lines from origin to each corner (convert both to pixels)
+        cornersInches.forEach((corner, idx) => {
+          const line = new Two.Line(robotXY.x, robotXY.y, x(corner.x), y(corner.y));
+          line.stroke = '#ff00ff';
+          line.linewidth = x(0.15);
+          line.id = `origin-to-corner-${idx}`;
+          twoInstance.add(line);
+        });
+      }
 
-      // Draw facing direction arrow (0° is right, 180° is left)
+      // Draw lines between corners to form the collider (separate toggle)
+      if (get(showRobotColliderEdges)) {
+        for (let i = 0; i < cornersInches.length; i++) {
+          const a = cornersInches[i];
+          const b = cornersInches[(i + 1) % cornersInches.length];
+          const edge = new Two.Line(x(a.x), y(a.y), x(b.x), y(b.y));
+          edge.stroke = '#00ffff';
+          edge.linewidth = x(0.18);
+          edge.id = `collider-edge-${i}`;
+          twoInstance.add(edge);
+        }
+      }
+      // Preserve backward-compatible single-flag overlay: if the legacy flag is set,
+      // also draw both origin-to-corner lines and collider edges.
+      if (get(showRobotCollisionOverlays)) {
+        cornersInches.forEach((corner, idx) => {
+          const line = new Two.Line(robotXY.x, robotXY.y, x(corner.x), y(corner.y));
+          line.stroke = '#ff00ff';
+          line.linewidth = x(0.15);
+          line.id = `origin-to-corner-legacy-${idx}`;
+          twoInstance.add(line);
+        });
+        for (let i = 0; i < cornersInches.length; i++) {
+          const a = cornersInches[i];
+          const b = cornersInches[(i + 1) % cornersInches.length];
+          const edge = new Two.Line(x(a.x), y(a.y), x(b.x), y(b.y));
+          edge.stroke = '#00ffff';
+          edge.linewidth = x(0.18);
+          edge.id = `collider-edge-legacy-${i}`;
+          twoInstance.add(edge);
+        }
+      }
+      const originDot = new Two.Circle(robotXY.x, robotXY.y, x(0.7));
+      originDot.fill = '#00ff00';
+      originDot.noStroke();
+      originDot.id = 'robot-origin-dot';
+      twoInstance.add(originDot);
+      // Draw facing direction arrow (always visible)
       const arrowLength = x(robotWidth * 0.9);
       const arrowAngleRad = (robotHeading * Math.PI) / 180;
       const arrowEndX = robotXY.x + Math.cos(arrowAngleRad) * arrowLength;
@@ -796,34 +900,21 @@ if (!Array.isArray(lines)) lines = [];
       arrowHeadRight.linewidth = x(0.18);
       arrowHeadRight.id = 'robot-facing-arrowhead-right';
       twoInstance.add(arrowHeadRight);
-      // Draw lines between corners to form the collider
-      for (let i = 0; i < cornersInches.length; i++) {
-        const a = cornersInches[i];
-        const b = cornersInches[(i + 1) % cornersInches.length];
-        const edge = new Two.Line(x(a.x), y(a.y), x(b.x), y(b.y));
-        edge.stroke = '#00ffff';
-        edge.linewidth = x(0.18);
-        edge.id = `collider-edge-${i}`;
-        twoInstance.add(edge);
-      }
-      const originDot = new Two.Circle(robotXY.x, robotXY.y, x(0.7));
-      originDot.fill = '#00ff00';
-      originDot.noStroke();
-      originDot.id = 'robot-origin-dot';
-      twoInstance.add(originDot);
       // Show coordinates and rotation, offset further right
-      const degrees = robotHeading ? robotHeading.toFixed(1) : '0';
-      const originLabel = new Two.Text(
-        `(${(x.invert(robotXY.x)).toFixed(1)}, ${(y.invert(robotXY.y)).toFixed(1)})\n${degrees}°`,
-        robotXY.x + x(5),
-        robotXY.y - x(1.5),
-        x(2.5)
-      );
-      originLabel.fill = '#00ff00';
-      originLabel.size = x(1.2);
-      originLabel.noStroke();
-      originLabel.id = 'robot-origin-label';
-      twoInstance.add(originLabel);
+      if (get(showRobotLiveCoordinates)) {
+        const degrees = robotHeading ? robotHeading.toFixed(1) : '0';
+        const originLabel = new Two.Text(
+          `(${(x.invert(robotXY.x)).toFixed(1)}, ${(y.invert(robotXY.y)).toFixed(1)})\n${degrees}°`,
+          robotXY.x + x(5),
+          robotXY.y - x(1.5),
+          x(2.5)
+        );
+        originLabel.fill = '#00ff00';
+        originLabel.size = x(1.2);
+        originLabel.noStroke();
+        originLabel.id = 'robot-origin-label';
+        twoInstance.add(originLabel);
+      }
     }
 
     // In comparison mode, draw all visible paths
@@ -2026,121 +2117,7 @@ $: canRedo = redoStack.length > 0;
 <div
   class="w-screen h-screen pt-16 pb-2 px-2 flex flex-row justify-center items-stretch gap-2 overflow-hidden"
 >
-  <!-- Path Selector Panel -->
-  <div class="w-48 flex-shrink-0 flex flex-col gap-2 bg-neutral-100 dark:bg-neutral-800 rounded-lg p-2 overflow-hidden">
-    <div class="flex items-center justify-between">
-      <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-300">Paths</h3>
-      <button
-        on:click={addNewPath}
-        class="p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
-        title="Add new path"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19"></line>
-          <line x1="5" y1="12" x2="19" y2="12"></line>
-        </svg>
-      </button>
-    </div>
-    
-    <!-- Comparison Mode Toggle -->
-    <label class="flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400 cursor-pointer">
-      <input
-        type="checkbox"
-        bind:checked={comparisonMode}
-        class="rounded border-neutral-300 dark:border-neutral-600"
-      />
-      Compare paths
-    </label>
-    
-    <div class="flex-1 overflow-y-auto space-y-1">
-      {#each paths as path, index}
-        <div
-          class="flex items-center gap-2 p-2 rounded cursor-pointer transition-colors {index === activePathIndex ? 'bg-blue-100 dark:bg-blue-900/50 ring-1 ring-blue-500' : 'hover:bg-neutral-200 dark:hover:bg-neutral-700'}"
-          on:click={() => setActivePath(index)}
-          on:keydown={(e) => e.key === 'Enter' && setActivePath(index)}
-          role="button"
-          tabindex="0"
-        >
-          <!-- Visibility Toggle -->
-          <button
-            on:click|stopPropagation={() => togglePathVisibility(index)}
-            class="p-0.5 rounded hover:bg-neutral-300 dark:hover:bg-neutral-600"
-            title={path.visible ? 'Hide path' : 'Show path'}
-          >
-            {#if path.visible}
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                <circle cx="12" cy="12" r="3"></circle>
-              </svg>
-            {:else}
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-40">
-                <path d="M17.94 17.94A10.07 10.07 0 0  1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
-                <line x1="1" y1="1" x2="23" y2="23"></line>
-              </svg>
-            {/if}
-          </button>
-          
-          <!-- Color picker -->
-          <label class="relative flex-shrink-0 cursor-pointer" title="Change path color">
-            <input
-              type="color"
-              value={path.color}
-              on:input|stopPropagation={(e) => changePathColor(index, e.currentTarget.value)}
-              on:click|stopPropagation
-              class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-            <div
-              class="w-4 h-4 rounded-full border-2 border-white dark:border-neutral-600 shadow-sm"
-              style="background-color: {path.color}"
-            ></div>
-          </label>
-          
-          <!-- Path name -->
-          <span
-            class="flex-1 text-xs truncate text-neutral-700 dark:text-neutral-300"
-            on:dblclick|stopPropagation={() => renamePathPrompt(index)}
-            title="Double-click to rename"
-          >
-            {path.name}
-          </span>
-          
-          <!-- Path menu -->
-          <div class="flex items-center gap-0.5">
-            <button
-              on:click|stopPropagation={() => duplicatePath(index)}
-              class="p-0.5 rounded hover:bg-neutral-300 dark:hover:bg-neutral-600 opacity-60 hover:opacity-100"
-              title="Duplicate path"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-              </svg>
-            </button>
-            {#if paths.length > 1}
-              <button
-                on:click|stopPropagation={() => deletePath(index)}
-                class="p-0.5 rounded hover:bg-red-200 dark:hover:bg-red-900/50 opacity-60 hover:opacity-100 text-red-600 dark:text-red-400"
-                title="Delete path"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="3 6 5 6 21 6"></polyline>
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                </svg>
-              </button>
-            {/if}
-          </div>
-        </div>
-      {/each}
-    </div>
-    
-    <!-- Path info -->
-    <div class="border-t border-neutral-300 dark:border-neutral-600 pt-2 text-xs text-neutral-500 dark:text-neutral-400">
-      <div>{paths.length} path{paths.length !== 1 ? 's' : ''}</div>
-      {#if comparisonMode}
-        <div class="text-blue-500">Comparison active</div>
-      {/if}
-    </div>
-  </div>
+  <!-- Left path selector removed per request -->
 
   <div class="flex h-full justify-center items-center flex-shrink-0">
     <div

@@ -1,4 +1,14 @@
 import { writable } from "svelte/store";
+
+// Show/hide robot collision overlays (pink/blue lines)
+// Keep legacy flag off by default so new, separate toggles control visibility.
+export const showRobotCollisionOverlays = writable(false);
+// Show/hide live robot coordinates (disabled by default as requested)
+export const showRobotLiveCoordinates = writable(false);
+// Show/hide origin -> corner (pink) lines (disabled by default)
+export const showRobotOriginToCornerLines = writable(false);
+// Show/hide collider edges (lines between corners) (enabled by default)
+export const showRobotColliderEdges = writable(true);
 export const showAllCollisions = writable(false);
 export const colliderTrailColorMode = writable<'same' | 'different'>('different');
 

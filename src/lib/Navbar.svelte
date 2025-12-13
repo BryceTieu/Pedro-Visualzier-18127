@@ -10,7 +10,7 @@
   import codeStyle from "svelte-highlight/styles/androidstudio";
   import { cubicInOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
-  import { darkMode, showRuler, showProtractor, showGrid, protractorLockToRobot, gridSize, clickToPlaceMode, centerLineWarningEnabled, showCollisionPath, collisionNextSegmentOnly } from "../stores";
+  import { darkMode, showRuler, showProtractor, showGrid, protractorLockToRobot, gridSize, clickToPlaceMode, centerLineWarningEnabled, showCollisionPath, collisionNextSegmentOnly, showRobotLiveCoordinates, showRobotOriginToCornerLines, showRobotColliderEdges } from "../stores";
   import { getRandomColor, titleCase } from "../utils";
   import html2canvas from "html2canvas";
   import GIF from "gif.js";
@@ -457,6 +457,8 @@
           {/if}
         </button>
       {/if}
+      
+      
     </div>
 
     <!-- Path Editing Tools - Distinct Section -->
@@ -889,6 +891,71 @@
               Choose how to visualize robot collision points. "Off" disables all collision overlays.
             </div>
           </div>
+
+            <div class="w-full h-px bg-neutral-200 dark:bg-neutral-700 my-2"></div>
+
+            <div class="font-semibold text-lg">Robot Overlays</div>
+            <div class="flex flex-col gap-3 w-full">
+              <div class="flex flex-row justify-between items-center w-full">
+                <div class="flex flex-col">
+                  <div class="font-light">Live Coordinates</div>
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400">Show robot position and heading text near robot</div>
+                </div>
+                <button 
+                  on:click={() => { showRobotLiveCoordinates.set(!$showRobotLiveCoordinates); console.log('showRobotLiveCoordinates ->', !$showRobotLiveCoordinates); }}
+                  class="relative w-12 h-6 rounded-full transition-colors duration-200"
+                  class:bg-green-500={$showRobotLiveCoordinates}
+                  class:bg-neutral-300={!$showRobotLiveCoordinates}
+                  class:dark:bg-neutral-600={!$showRobotLiveCoordinates}
+                >
+                  <div 
+                    class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
+                    class:translate-x-1={!$showRobotLiveCoordinates}
+                    class:translate-x-7={$showRobotLiveCoordinates}
+                  ></div>
+                </button>
+              </div>
+
+              <div class="flex flex-row justify-between items-center w-full">
+                <div class="flex flex-col">
+                  <div class="font-light">Origin → Corner Lines</div>
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400">Draw pink lines from robot origin to each corner</div>
+                </div>
+                <button 
+                  on:click={() => { showRobotOriginToCornerLines.set(!$showRobotOriginToCornerLines); console.log('showRobotOriginToCornerLines ->', !$showRobotOriginToCornerLines); }}
+                  class="relative w-12 h-6 rounded-full transition-colors duration-200"
+                  class:bg-pink-500={$showRobotOriginToCornerLines}
+                  class:bg-neutral-300={!$showRobotOriginToCornerLines}
+                  class:dark:bg-neutral-600={!$showRobotOriginToCornerLines}
+                >
+                  <div 
+                    class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
+                    class:translate-x-1={!$showRobotOriginToCornerLines}
+                    class:translate-x-7={$showRobotOriginToCornerLines}
+                  ></div>
+                </button>
+              </div>
+
+              <div class="flex flex-row justify-between items-center w-full">
+                <div class="flex flex-col">
+                  <div class="font-light">Collider Edges</div>
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400">Draw lines between corners (collider)</div>
+                </div>
+                <button 
+                  on:click={() => { showRobotColliderEdges.set(!$showRobotColliderEdges); console.log('showRobotColliderEdges ->', !$showRobotColliderEdges); }}
+                  class="relative w-12 h-6 rounded-full transition-colors duration-200"
+                  class:bg-green-500={$showRobotColliderEdges}
+                  class:bg-neutral-300={!$showRobotColliderEdges}
+                  class:dark:bg-neutral-600={!$showRobotColliderEdges}
+                >
+                  <div 
+                    class="absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200"
+                    class:translate-x-1={!$showRobotColliderEdges}
+                    class:translate-x-7={$showRobotColliderEdges}
+                  ></div>
+                </button>
+              </div>
+            </div>
 
           {#if $showCollisionPath}
           <div class="flex flex-row justify-between items-center w-full pl-4">
