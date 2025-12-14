@@ -14,14 +14,90 @@ let isUndoRedo = false;
 let canUndo = false;
 let canRedo = false;
 let comparisonMode = false;
-function loadActivePathToLegacy() {}
-function saveToHistory() {}
-function syncPathFromLegacy() {}
-function getStateHash() { return ''; }
-function deepClone(obj: any) { return JSON.parse(JSON.stringify(obj)); }
-function addNewPath() {}
+
+// Multi-path management functions
+function getStateHash() {
+  try {
+    return JSON.stringify({ startPoint, lines });
+  } catch (e) {
+    return '';
+  }
+}
+
+function deepClone(obj: any) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function saveToHistory() {
+  const hash = getStateHash();
+  if (hash === lastSavedState) return;
+  undoStack = [...undoStack, { startPoint: deepClone(startPoint), lines: deepClone(lines) }];
+  if (undoStack.length > MAX_HISTORY) undoStack = undoStack.slice(-MAX_HISTORY);
+  redoStack = [];
+  lastSavedState = hash;
+}
+
 let paths: RobotPath[] = [];
 let activePathIndex: number = 0;
+
+function loadActivePathToLegacy() {
+  // Ensure there's at least one path stored
+  if (!paths || paths.length === 0) {
+    const newColor = getRandomColor();
+    paths = [
+      {
+        id: `path-${Date.now()}`,
+        name: "Path 1",
+        color: newColor,
+          startPoint: { ...deepClone(startPoint), color: newColor },
+        lines: deepClone(lines).map((l: Line) => ({ ...l, color: newColor })),
+        visible: true,
+      },
+    ];
+    activePathIndex = 0;
+  }
+
+  const p = paths[activePathIndex];
+  if (!p) return;
+
+  // Load the path into the editing (legacy) variables
+  startPoint = deepClone(p.startPoint);
+  // Pull robot size from the saved path if present
+  if (typeof p.robotWidth === 'number') robotWidth = p.robotWidth;
+  if (typeof p.robotHeight === 'number') robotHeight = p.robotHeight;
+  lines = deepClone(p.lines).map((l: Line) => ({ ...l, color: l.color ?? p.color }));
+}
+
+function syncPathFromLegacy() {
+  // Save current editing state into the active stored path
+  if (!paths || paths.length === 0) return;
+  const idx = activePathIndex;
+  if (idx < 0 || idx >= paths.length) return;
+  paths[idx].startPoint = deepClone(startPoint);
+  // Save current robot sizes into the stored path
+  paths[idx].robotWidth = robotWidth;
+  paths[idx].robotHeight = robotHeight;
+  paths[idx].lines = deepClone(lines).map((l: Line) => ({ ...l, color: l.color ?? paths[idx].color }));
+  paths = paths; // trigger reactivity
+}
+
+function addNewPath() {
+  const newColor = getRandomColor();
+  const newPath: RobotPath = {
+    id: `path-${Date.now()}`,
+    name: `Path ${paths.length + 1}`,
+    color: newColor,
+    startPoint: { ...deepClone(startPoint), color: newColor },
+    lines: deepClone(lines).map((l: Line) => ({ ...l, color: l.color ?? newColor })),
+    robotWidth: robotWidth,
+    robotHeight: robotHeight,
+    visible: true,
+  };
+  paths = [...paths, newPath];
+  activePathIndex = paths.length - 1;
+  loadActivePathToLegacy();
+  saveToHistory();
+}
   import * as d3 from "d3";
   import { onMount } from "svelte";
   import Two from "two.js";
@@ -168,6 +244,13 @@ if (!Array.isArray(lines)) lines = [];
     }
   }
 
+  // Helper to handle color input events (avoid inline TS casts in template)
+  function changePathColorFromEvent(index: number, e: Event) {
+    const target = e.target as HTMLInputElement | null;
+    if (!target) return;
+    changePathColor(index, target.value);
+  }
+
   // Convex hull algorithm (Graham scan) for collision boundary
   function computeConvexHull(points: BasePoint[]): BasePoint[] {
     if (points.length < 3) return points;
@@ -281,6 +364,8 @@ if (!Array.isArray(lines)) lines = [];
   onMount(() => {
     lastSavedState = getStateHash();
     saveToHistory();
+    // Ensure multi-path storage is initialized from current editing state
+    loadActivePathToLegacy();
     
     // Listen for pointer up globally to catch end of drag operations
     window.addEventListener('pointerup', onPointerUp);
@@ -431,14 +516,14 @@ if (!Array.isArray(lines)) lines = [];
       x(pointRadius)
     );
     startPointElem.id = `point-0-0`;
-    startPointElem.fill = lines[0].color;
+    startPointElem.fill = startPoint.color ?? lines[0]?.color ?? "#000";
     startPointElem.noStroke();
 
     _points.push(startPointElem);
 
     lines.forEach((line, idx) => {
       [line.endPoint, ...line.controlPoints].forEach((point, idx1) => {
-        if (idx1 > 0) {
+          if (idx1 > 0) {
           let pointGroup = new Two.Group();
           pointGroup.id = `point-${idx + 1}-${idx1}`;
 
@@ -448,7 +533,7 @@ if (!Array.isArray(lines)) lines = [];
             x(pointRadius)
           );
           pointElem.id = `point-${idx + 1}-${idx1}-background`;
-          pointElem.fill = line.color;
+          pointElem.fill = (point as any).color ?? line.color;
           pointElem.noStroke();
 
           let pointText = new Two.Text(
@@ -468,14 +553,14 @@ if (!Array.isArray(lines)) lines = [];
 
           pointGroup.add(pointElem, pointText);
           _points.push(pointGroup);
-        } else {
+          } else {
           let pointElem = new Two.Circle(
             x(point.x),
             y(point.y),
             x(pointRadius)
           );
           pointElem.id = `point-${idx + 1}-${idx1}`;
-          pointElem.fill = line.color;
+            pointElem.fill = (point as any).color ?? line.color;
           pointElem.noStroke();
           _points.push(pointElem);
         }
@@ -917,12 +1002,10 @@ if (!Array.isArray(lines)) lines = [];
       }
     }
 
-    // In comparison mode, draw all visible paths
+    // In comparison mode, draw non-active visible paths first, then active path on top
     if (comparisonMode) {
-      paths.forEach((pathData, pathIdx) => {
-        if (!pathData.visible) return;
-        const isActive = pathIdx === activePathIndex;
-        // Draw lines for this path
+      // helper to draw a single path's lines
+      const drawPathLines = (pathData: RobotPath, pathIdx: number, opts: { active: boolean }) => {
         pathData.lines.forEach((line, idx) => {
           let _startPoint = idx === 0 ? pathData.startPoint : pathData.lines[idx - 1].endPoint;
           let lineElem: Path | PathLine;
@@ -953,21 +1036,215 @@ if (!Array.isArray(lines)) lines = [];
             lineElem = new Two.Line(x(_startPoint.x), y(_startPoint.y), x(line.endPoint.x), y(line.endPoint.y));
           }
           lineElem.id = `path-${pathIdx}-line-${idx + 1}`;
-          lineElem.stroke = pathData.color;
-          lineElem.linewidth = x(lineWidth);
-          lineElem.opacity = isActive ? 1 : 0.5;
+          lineElem.stroke = line.color ?? pathData.color;
+          // Make active path slightly thicker and fully opaque for visibility
+          lineElem.linewidth = x(lineWidth * (opts.active ? 1.6 : 1));
+          lineElem.opacity = opts.active ? 1 : 0.45;
           lineElem.noFill();
           twoInstance.add(lineElem);
         });
-        // Draw start point for this path
-        if (isActive) {
-          let startPointElem = new Two.Circle(x(pathData.startPoint.x), y(pathData.startPoint.y), x(pointRadius));
-          startPointElem.id = `path-${pathIdx}-point-0`;
-          startPointElem.fill = pathData.color;
-          startPointElem.noStroke();
-          twoInstance.add(startPointElem);
+      };
+
+      // draw non-active first
+      paths.forEach((pd, pidx) => {
+        if (!pd.visible) return;
+        if (pidx === activePathIndex) return;
+        drawPathLines(pd, pidx, { active: false });
+        // small markers for context
+        let sp = new Two.Circle(x(pd.startPoint.x), y(pd.startPoint.y), x(pointRadius * 0.8));
+        sp.fill = pd.startPoint.color ?? pd.color;
+        sp.noStroke();
+        sp.opacity = 0.7;
+        twoInstance.add(sp);
+        pd.lines.forEach((ln) => {
+          const end = new Two.Circle(x(ln.endPoint.x), y(ln.endPoint.y), x(pointRadius * 0.6));
+          end.fill = ln.endPoint.color ?? pd.color;
+          end.noStroke();
+          end.opacity = 0.6;
+          twoInstance.add(end);
+          ln.controlPoints.forEach((pt) => {
+            const cp = new Two.Circle(x(pt.x), y(pt.y), x(pointRadius * 0.5));
+            cp.fill = (pt as any).color ?? pd.color;
+            cp.noStroke();
+            cp.opacity = 0.5;
+            twoInstance.add(cp);
+          });
+        });
+        // Collision overlays for ghost path (whole-path)
+        if (get(showAllCollisions) && pd.lines.length > 0) {
+          const samplesPerSegment = 20;
+          for (let seg = 0; seg < pd.lines.length; seg++) {
+            let staticLine = pd.lines[seg];
+            let staticStartPoint = seg === 0 ? pd.startPoint : pd.lines[seg - 1].endPoint;
+            for (let i = 0; i < samplesPerSegment; i++) {
+              const t = i / samplesPerSegment;
+              let staticLinePercent = easeInOutQuad(t);
+              let staticRobotInchesXY = getCurvePoint(staticLinePercent, [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
+              let staticHeading = (() => {
+                switch (staticLine.endPoint.heading) {
+                  case "linear":
+                    return -shortestRotation(
+                      staticLine.endPoint.startDeg ?? 0,
+                      staticLine.endPoint.endDeg ?? 0,
+                      staticLinePercent
+                    );
+                  case "constant":
+                    return -staticLine.endPoint.degrees;
+                  case "tangential": {
+                    const staticNextPointInches = getCurvePoint(staticLinePercent + (staticLine.endPoint.reverse ? -0.01 : 0.01), [staticStartPoint, ...staticLine.controlPoints, staticLine.endPoint]);
+                    const staticDx = staticNextPointInches.x - staticRobotInchesXY.x;
+                    const staticDy = staticNextPointInches.y - staticRobotInchesXY.y;
+                    if (staticDx !== 0 || staticDy !== 0) {
+                      return -radiansToDegrees(Math.atan2(staticDy, staticDx));
+                    }
+                    return 0;
+                  }
+                  default:
+                    return 0;
+                }
+              })();
+              const staticAngleRad = (-staticHeading * Math.PI) / 180;
+              const staticCos = Math.cos(staticAngleRad);
+              const staticSin = Math.sin(staticAngleRad);
+              const staticHalfL = (pd.robotWidth ?? robotWidth) / 2;
+              const staticHalfW = (pd.robotHeight ?? robotHeight) / 2;
+              const staticCornersInches = [
+                { x: staticRobotInchesXY.x + staticHalfL * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + (-staticHalfW) * staticCos },
+                { x: staticRobotInchesXY.x + staticHalfL * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + staticHalfW * staticCos },
+                { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + staticHalfW * staticCos },
+                { x: staticRobotInchesXY.x + (-staticHalfL) * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + (-staticHalfL) * staticSin + (-staticHalfW) * staticCos }
+              ];
+              for (let j = 0; j < staticCornersInches.length; j++) {
+                const staticA = staticCornersInches[j];
+                const staticB = staticCornersInches[(j + 1) % staticCornersInches.length];
+                const staticEdge = new Two.Line(x(staticA.x), y(staticA.y), x(staticB.x), y(staticB.y));
+                staticEdge.stroke = 'rgba(0,200,255,0.35)';
+                staticEdge.linewidth = x(0.18);
+                staticEdge.id = `ghost-collider-all-${seg}-${i}-${j}-${pidx}`;
+                twoInstance.add(staticEdge);
+              }
+            }
+          }
+        }
+
+        // Collision overlays for ghost path (current segment only)
+        if (get(collisionNextSegmentOnly) && pd.lines.length > 0) {
+          const effectivePercent = Math.min(typeof robotPercentArg !== 'undefined' ? robotPercentArg : percentArg, 99.999999999);
+          let totalLineProgress = (pd.lines.length * effectivePercent) / 100;
+          let currentLineIdx = Math.min(Math.trunc(totalLineProgress), pd.lines.length - 1);
+          let currentLine = pd.lines[currentLineIdx];
+          let currentStartPoint = currentLineIdx === 0 ? pd.startPoint : pd.lines[currentLineIdx - 1].endPoint;
+          const segSamples = 20;
+          for (let i = 0; i < segSamples; i++) {
+            const t = i / segSamples;
+            let segPercent = easeInOutQuad(t);
+            let segRobotInchesXY = getCurvePoint(segPercent, [currentStartPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+            let segHeading = (() => {
+              switch (currentLine.endPoint.heading) {
+                case "linear":
+                  return -shortestRotation(
+                    currentLine.endPoint.startDeg ?? 0,
+                    currentLine.endPoint.endDeg ?? 0,
+                    segPercent
+                  );
+                case "constant":
+                  return -currentLine.endPoint.degrees;
+                case "tangential": {
+                  const segNextPointInches = getCurvePoint(segPercent + (currentLine.endPoint.reverse ? -0.01 : 0.01), [currentStartPoint, ...currentLine.controlPoints, currentLine.endPoint]);
+                  const segDx = segNextPointInches.x - segRobotInchesXY.x;
+                  const segDy = segNextPointInches.y - segRobotInchesXY.y;
+                  if (segDx !== 0 || segDy !== 0) {
+                    return -radiansToDegrees(Math.atan2(segDy, segDx));
+                  }
+                  return 0;
+                }
+                default:
+                  return 0;
+              }
+            })();
+            const segAngleRad = (-segHeading * Math.PI) / 180;
+            const segCos = Math.cos(segAngleRad);
+            const segSin = Math.sin(segAngleRad);
+            const segHalfL = (pd.robotWidth ?? robotWidth) / 2;
+            const segHalfW = (pd.robotHeight ?? robotHeight) / 2;
+            const segCornersInches = [
+              { x: segRobotInchesXY.x + segHalfL * segCos - (-segHalfW) * segSin, y: segRobotInchesXY.y + segHalfL * segSin + (-segHalfW) * segCos },
+              { x: segRobotInchesXY.x + segHalfL * segCos - segHalfW * segSin, y: segRobotInchesXY.y + segHalfL * segSin + segHalfW * segCos },
+              { x: segRobotInchesXY.x + (-segHalfL) * segCos - segHalfW * segSin, y: segRobotInchesXY.y + (-segHalfL) * segSin + segHalfW * segCos },
+              { x: segRobotInchesXY.x + (-segHalfL) * segCos - (-segHalfW) * segSin, y: segRobotInchesXY.y + (-segHalfL) * segSin + (-segHalfW) * segCos }
+            ];
+            for (let j = 0; j < segCornersInches.length; j++) {
+              const segA = segCornersInches[j];
+              const segB = segCornersInches[(j + 1) % segCornersInches.length];
+              const segEdge = new Two.Line(x(segA.x), y(segA.y), x(segB.x), y(segB.y));
+              segEdge.stroke = 'rgba(255,0,0,0.35)';
+              segEdge.linewidth = x(0.18);
+              segEdge.id = `ghost-collider-current-${currentLineIdx}-${i}-${j}-${pidx}`;
+              twoInstance.add(segEdge);
+            }
+          }
+        }
+        // Draw a directional arrow for the ghost robot (shows facing)
+        try {
+          const otherPos = getPathRobotPosition(pd, robotPercentArg);
+          if (Number.isFinite(otherPos.x) && Number.isFinite(otherPos.y)) {
+            const ghostRobotW = pd.robotWidth ?? robotWidth;
+            const arrowLength = x(ghostRobotW * 0.9);
+            const arrowAngleRad = (otherPos.heading * Math.PI) / 180;
+            const arrowEndX = otherPos.x + Math.cos(arrowAngleRad) * arrowLength;
+            const arrowEndY = otherPos.y + Math.sin(arrowAngleRad) * arrowLength;
+
+            const ghostArrow = new Two.Line(otherPos.x, otherPos.y, arrowEndX, arrowEndY);
+            ghostArrow.stroke = pd.color;
+            ghostArrow.linewidth = x(0.18);
+            ghostArrow.id = `ghost-arrow-${pidx}`;
+            ghostArrow.opacity = 0.6;
+            twoInstance.add(ghostArrow);
+
+            const headLength = x(1.0);
+            const headAngle = Math.PI / 7;
+            const leftHeadX = arrowEndX - headLength * Math.cos(arrowAngleRad - headAngle);
+            const leftHeadY = arrowEndY - headLength * Math.sin(arrowAngleRad - headAngle);
+            const rightHeadX = arrowEndX - headLength * Math.cos(arrowAngleRad + headAngle);
+            const rightHeadY = arrowEndY - headLength * Math.sin(arrowAngleRad + headAngle);
+            const ghostHeadLeft = new Two.Line(arrowEndX, arrowEndY, leftHeadX, leftHeadY);
+            ghostHeadLeft.stroke = pd.color;
+            ghostHeadLeft.linewidth = x(0.14);
+            ghostHeadLeft.opacity = 0.6;
+            twoInstance.add(ghostHeadLeft);
+            const ghostHeadRight = new Two.Line(arrowEndX, arrowEndY, rightHeadX, rightHeadY);
+            ghostHeadRight.stroke = pd.color;
+            ghostHeadRight.linewidth = x(0.14);
+            ghostHeadRight.opacity = 0.6;
+            twoInstance.add(ghostHeadRight);
+
+            const originDotGhost = new Two.Circle(otherPos.x, otherPos.y, x(0.6));
+            originDotGhost.fill = pd.color;
+            originDotGhost.noStroke();
+            originDotGhost.opacity = 0.6;
+            twoInstance.add(originDotGhost);
+          }
+        } catch (e) {
+          // don't break drawing if arrow generation fails
         }
       });
+
+      // active path last (on top) — render the current editing path so main lines always show
+      const activeToRender: RobotPath = {
+        id: paths[activePathIndex]?.id ?? `editing-${Date.now()}`,
+        name: paths[activePathIndex]?.name ?? "Editing",
+        color: paths[activePathIndex]?.color ?? (lines[0]?.color ?? "#000"),
+        startPoint: deepClone(startPoint),
+        lines: deepClone(lines),
+        visible: true,
+      };
+      drawPathLines(activeToRender, activePathIndex >= 0 ? activePathIndex : -1, { active: true });
+      let startPointElem = new Two.Circle(x(activeToRender.startPoint.x), y(activeToRender.startPoint.y), x(pointRadius));
+      startPointElem.id = `path-${activePathIndex}-point-0`;
+      startPointElem.fill = activeToRender.startPoint.color ?? activeToRender.color;
+      startPointElem.noStroke();
+      twoInstance.add(startPointElem);
+
       // Draw points only for active path
       twoInstance.add(...points);
     } else {
@@ -1018,6 +1295,9 @@ if (!Array.isArray(lines)) lines = [];
   })();
 
   let playing = false;
+
+  // UI state for paths manager collapse
+  let showPathsManager: boolean = false;
 
   let animationFrame: number;
   let startTime: number | null = null;
@@ -1267,7 +1547,7 @@ if (!Array.isArray(lines)) lines = [];
         x(pointRadius)
       );
       startPointElem.id = `point-0-0-export`;
-      startPointElem.fill = lines[0].color;
+      startPointElem.fill = startPoint.color ?? lines[0]?.color ?? "#000";
       startPointElem.noStroke();
       _points.push(startPointElem);
       lines.forEach((line, idx) => {
@@ -1282,7 +1562,7 @@ if (!Array.isArray(lines)) lines = [];
               x(pointRadius)
             );
             pointElem.id = `point-${idx + 1}-${idx1}-background-export`;
-            pointElem.fill = line.color;
+            pointElem.fill = (point as any).color ?? line.color;
             pointElem.noStroke();
 
             let pointText = new Two.Text(
@@ -1309,7 +1589,7 @@ if (!Array.isArray(lines)) lines = [];
               x(pointRadius)
             );
             pointElem.id = `point-${idx + 1}-${idx1}-export`;
-            pointElem.fill = line.color;
+            pointElem.fill = (point as any).color ?? line.color;
             pointElem.noStroke();
             _points.push(pointElem);
           }
@@ -2130,23 +2410,25 @@ $: canRedo = redoStack.length > 0;
         <img
           src={robotImageSrc}
           alt="Robot"
-          style={`position: absolute; top: ${robotXY.y}px; left: ${robotXY.x}px; transform: translate(-50%, -50%) rotate(${robotHeading}deg); z-index: 20; width: ${x(robotWidth)}px; height: ${x(robotHeight)}px; object-fit: fill;`}
+          style={`position: absolute; top: ${robotXY.y}px; left: ${robotXY.x}px; transform: translate(-50%, -50%) rotate(${robotHeading}deg); z-index: 20; width: ${x(paths[activePathIndex]?.robotWidth ?? robotWidth)}px; height: ${x(paths[activePathIndex]?.robotHeight ?? robotHeight)}px; object-fit: fill;`}
         />
 
         <!-- Comparison mode: render ghost robots for other visible paths -->
         {#if comparisonMode}
           {#each paths as otherPath, idx}
-            {#if idx !== activePathIndex && otherPath.visible}
-              {@const otherRobot = getPathRobotPosition(otherPath, robotPercent)}
-              <div
-                class="absolute pointer-events-none"
-                style={`top: ${otherRobot.y}px; left: ${otherRobot.x}px; transform: translate(-50%, -50%) rotate(${otherRobot.heading}deg); z-index: 19; width: ${x(robotWidth)}px; height: ${x(robotHeight)}px; opacity: 0.5; border: 2px dashed ${otherPath.color}; border-radius: 4px;`}
-              >
-                <div class="w-full h-full flex items-center justify-center text-xs font-bold" style="color: {otherPath.color}">
-                  {idx + 1}
-                </div>
-              </div>
-            {/if}
+                {#if idx !== activePathIndex && otherPath.visible}
+                  {@const otherRobot = getPathRobotPosition(otherPath, robotPercent)}
+                  {#if Number.isFinite(otherRobot.x) && Number.isFinite(otherRobot.y)}
+                    <div
+                      class="absolute pointer-events-none"
+                      style={`top: ${otherRobot.y}px; left: ${otherRobot.x}px; transform: translate(-50%, -50%) rotate(${otherRobot.heading}deg); z-index: 19; width: ${x(otherPath.robotWidth ?? robotWidth)}px; height: ${x(otherPath.robotHeight ?? robotHeight)}px; opacity: 0.45; border: 2px dashed ${otherPath.color}; border-radius: 4px;`}
+                    >
+                      <div class="w-full h-full flex items-center justify-center text-xs font-bold" style="color: {otherPath.color}">
+                        {idx + 1}
+                      </div>
+                    </div>
+                  {/if}
+                {/if}
           {/each}
         {/if}
       </div>
@@ -2156,6 +2438,48 @@ $: canRedo = redoStack.length > 0;
   <!-- RIGHT: Controls / panels — fill remaining space -->
   <div class="flex-1 overflow-auto p-4">
     <div class="ui-shrink">
+        <!-- Paths manager: collapsible controls for path save/compare -->
+        <div class="mb-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <button
+                class="px-2 py-1 rounded bg-blue-500 text-white text-sm"
+                on:click={addNewPath}
+              >
+                + Add
+              </button>
+              <button class="px-2 py-1 rounded bg-gray-200 dark:bg-gray-800 text-sm" on:click={() => { comparisonMode = !comparisonMode }}>
+                {#if comparisonMode}Exit Compare{:else}Compare{/if}
+              </button>
+            </div>
+
+            <div>
+              <button class="text-sm font-semibold" on:click={() => (showPathsManager = !showPathsManager)}>
+                {#if showPathsManager}▾ Paths{/if}{#if !showPathsManager}▸ Paths{/if}
+              </button>
+            </div>
+          </div>
+
+          {#if showPathsManager}
+            <div class="p-3 bg-neutral-50 dark:bg-neutral-900 rounded-md shadow-sm">
+              {#each paths as p, idx}
+                <div class={`paths-row ${idx === activePathIndex ? 'selected' : ''} mb-2`} on:click={() => setActivePath(idx)}>
+                  <div class="idx-btn" style={`background:${p.color};`} aria-hidden>{idx + 1}</div>
+                  <div class="flex-1 text-sm truncate">{p.name}</div>
+                  <input title="Toggle Visible" type="checkbox" checked={p.visible} on:change={(e) => { e.stopPropagation(); togglePathVisibility(idx); }} />
+                  <input
+                    title="Color"
+                    class="path-color"
+                    type="color"
+                    value={p.color}
+                    on:input={(e) => { e.stopPropagation(); changePathColorFromEvent(idx, e); }}
+                  />
+                  <button title="Delete" class="px-2 text-red-500" on:click={(e) => { e.stopPropagation(); deletePath(idx); }}>🗑</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
       <ControlTab
         bind:playing
         {play}
@@ -2175,3 +2499,24 @@ $: canRedo = redoStack.length > 0;
     </div>
   </div>
 </div>
+
+<style>
+  .paths-row{
+    display:flex;
+    align-items:center;
+    gap:0.5rem;
+    padding:0.25rem 0.5rem;
+    border-radius:0.5rem;
+    cursor:pointer;
+  }
+  .paths-row:hover{ background: rgba(0,0,0,0.03); }
+  .paths-row.selected{ background: rgba(99,102,241,0.06); box-shadow: inset 0 0 0 2px rgba(99,102,241,0.12); }
+  .paths-row .idx-btn{
+    width:28px; height:28px; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700;
+  }
+  input.path-color{ -webkit-appearance:none; appearance:none; border:none; width:26px; height:26px; padding:0; border-radius:50%; background:transparent; }
+  input.path-color::-webkit-color-swatch{ border-radius:50%; border:none; }
+  input.path-color::-webkit-color-swatch-wrapper{ padding:0; }
+  /* Keep inputs from stretching in dark mode */
+  .paths-row input[type="checkbox"]{ width:auto; }
+</style>

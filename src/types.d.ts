@@ -1,6 +1,7 @@
 interface BasePoint {
   x: number;
   y: number;
+  color?: string;
 }
 
 type Point = BasePoint &
@@ -72,4 +73,6 @@ interface RobotPath {
     startPoint: Point;
     lines: Line[];
     visible: boolean;
+  robotWidth?: number;
+  robotHeight?: number;
 }

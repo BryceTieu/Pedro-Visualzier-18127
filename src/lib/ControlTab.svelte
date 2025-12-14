@@ -160,6 +160,12 @@
               class="size-2.5 rounded-full shadow-md"
               style={`background: ${line.color}`}
             />
+            <input
+              type="color"
+              bind:value={line.color}
+              title="Line color"
+              class="w-6 h-6 p-0 border-0 bg-transparent"
+            />
           </div>
           <div class="flex flex-row justify-end items-center gap-1">
             <button
@@ -170,6 +176,7 @@
                   {
                     x: _.random(36, 108),
                     y: _.random(36, 108),
+                    color: line.color,
                   },
                 ];
               }}
@@ -291,6 +298,14 @@
               bind:value={line.endPoint.y}
             />
 
+            <input
+              type="color"
+              bind:value={line.endPoint.color}
+              on:input={() => { if (!line.endPoint.color) line.endPoint.color = line.color }}
+              title="End point color"
+              class="w-6 h-6 p-0 border-0 bg-transparent"
+            />
+
             <select
               bind:value={line.endPoint.heading}
               class=" rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-28 text-sm"
@@ -397,6 +412,13 @@ With tangential heading, the heading follows the direction of the line."
                 </svg>
               </button>
             </div>
+              <input
+                type="color"
+                bind:value={point.color}
+                on:input={() => { if (!point.color) point.color = line.color }}
+                title="Control point color"
+                class="w-6 h-6 p-0 border-0 bg-transparent"
+              />
           </div>
         {/each}
       </div>
