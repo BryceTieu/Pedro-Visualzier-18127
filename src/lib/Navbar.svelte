@@ -10,7 +10,7 @@
   import codeStyle from "svelte-highlight/styles/androidstudio";
   import { cubicInOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
-  import { darkMode, showRuler, showProtractor, showGrid, protractorLockToRobot, gridSize, clickToPlaceMode, centerLineWarningEnabled, showCollisionPath, collisionNextSegmentOnly, showRobotLiveCoordinates, showRobotOriginToCornerLines, showRobotColliderEdges } from "../stores";
+  import { darkMode, showRuler, showProtractor, showGrid, protractorLockToRobot, gridSize, clickToPlaceMode, centerLineWarningEnabled, showCollisionPath, collisionNextSegmentOnly, showRobotLiveCoordinates, showRobotOriginToCornerLines, showRobotColliderEdges, collisionBoxColor, robotCollisionColor } from "../stores";
   import { getRandomColor, titleCase } from "../utils";
   import html2canvas from "html2canvas";
   import GIF from "gif.js";
@@ -58,6 +58,17 @@
 
   let dialogOpen = false;
   let settingsOpen = false;
+
+  // Handlers moved out of the template to avoid Svelte preprocessor errors
+  function onCollisionBoxColorInput(e: Event) {
+    const v = (e.target as HTMLInputElement).value;
+    collisionBoxColor.set(v);
+  }
+
+  function onRobotCollisionColorInput(e: Event) {
+    const v = (e.target as HTMLInputElement).value;
+    robotCollisionColor.set(v);
+  }
 
   // Display value for angular velocity (user inputs this, gets multiplied by PI)
   $: angularVelocityDisplay = settings ? settings.aVelocity / Math.PI : 1;
@@ -954,6 +965,27 @@
                     class:translate-x-7={$showRobotColliderEdges}
                   ></div>
                 </button>
+              </div>
+            </div>
+
+            <div class="w-full h-px bg-neutral-200 dark:bg-neutral-700 my-2"></div>
+
+            <div class="font-semibold text-lg">Collision Colors</div>
+            <div class="flex flex-col gap-3 w-full">
+              <div class="flex flex-row justify-between items-center w-full">
+                <div class="flex flex-col">
+                  <div class="font-light">Collision Box Color</div>
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400">Color used for collider edges/boxes</div>
+                </div>
+                <input type="color" class="w-10 h-8 p-0 border-0 bg-transparent" value={$collisionBoxColor} on:input={onCollisionBoxColorInput} />
+              </div>
+
+              <div class="flex flex-row justify-between items-center w-full">
+                <div class="flex flex-col">
+                  <div class="font-light">Robot Collision Color</div>
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400">Color used for robot-origin overlays and origin dot</div>
+                </div>
+                <input type="color" class="w-10 h-8 p-0 border-0 bg-transparent" value={$robotCollisionColor} on:input={onRobotCollisionColorInput} />
               </div>
             </div>
 

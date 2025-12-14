@@ -12,6 +12,10 @@ export const showRobotColliderEdges = writable(true);
 export const showAllCollisions = writable(false);
 export const colliderTrailColorMode = writable<'same' | 'different'>('different');
 
+// Collision color settings
+export const collisionBoxColor = writable('#00ffff'); // color used for collider edges/boxes
+export const robotCollisionColor = writable('#ff00ff'); // color used for robot-origin overlays (lines/dot)
+
 function createDarkModeStore() {
   const { set, subscribe, update } = writable<"light" | "dark">("dark");
 

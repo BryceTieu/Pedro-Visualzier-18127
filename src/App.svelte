@@ -62,9 +62,7 @@ function loadActivePathToLegacy() {
 
   // Load the path into the editing (legacy) variables
   startPoint = deepClone(p.startPoint);
-  // Pull robot size from the saved path if present
-  if (typeof p.robotWidth === 'number') robotWidth = p.robotWidth;
-  if (typeof p.robotHeight === 'number') robotHeight = p.robotHeight;
+  // Do not modify the editor robot size when loading a path; path sizes are stored per-path
   lines = deepClone(p.lines).map((l: Line) => ({ ...l, color: l.color ?? p.color }));
 }
 
@@ -74,9 +72,7 @@ function syncPathFromLegacy() {
   const idx = activePathIndex;
   if (idx < 0 || idx >= paths.length) return;
   paths[idx].startPoint = deepClone(startPoint);
-  // Save current robot sizes into the stored path
-  paths[idx].robotWidth = robotWidth;
-  paths[idx].robotHeight = robotHeight;
+  // Do not automatically overwrite stored per-path robot sizes here; sizes are edited in the paths manager
   paths[idx].lines = deepClone(lines).map((l: Line) => ({ ...l, color: l.color ?? paths[idx].color }));
   paths = paths; // trigger reactivity
 }
@@ -119,6 +115,7 @@ function addNewPath() {
   import hotkeys from 'hotkeys-js';
   import { clickToPlaceMode, centerLineWarningEnabled, collisionNextSegmentOnly, showCornerDots, colliderTrailColorMode, showRobotCollisionOverlays, showRobotLiveCoordinates, showRobotOriginToCornerLines, showRobotColliderEdges } from "./stores";
   import { showAllCollisions } from "./stores";
+  import { collisionBoxColor, robotCollisionColor } from "./stores";
   import { get } from 'svelte/store';
   import html2canvas from "html2canvas";
   import GIF from "gif.js";
@@ -142,6 +139,16 @@ function addNewPath() {
 
   let percent: number = 0;
   let playbackSpeed: number = 1; // Animation speed multiplier (0.25x to 3x)
+
+  function hexToRgba(hex: string, alpha: number) {
+    if (!hex) return `rgba(0,0,0,${alpha})`;
+    const normalized = hex.replace('#', '');
+    const bigint = parseInt(normalized, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
 
   /**
    * Converter for X axis from inches to pixels.
@@ -219,6 +226,8 @@ if (!Array.isArray(lines)) lines = [];
     activePathIndex = index;
     loadActivePathToLegacy(); // Load the new path's data
   }
+
+  // Note: per-path robot sizes are edited directly in the Paths manager UI; do not sync editor size automatically.
   
   function togglePathVisibility(index: number) {
     paths[index].visible = !paths[index].visible;
@@ -250,6 +259,25 @@ if (!Array.isArray(lines)) lines = [];
     if (!target) return;
     changePathColor(index, target.value);
   }
+
+  // Helpers to update per-path robot sizes from template events without inline TS casts
+  function updatePathRobotWidth(index: number, e: Event) {
+    const target = e.target as HTMLInputElement | null;
+    if (!target) return;
+    const v = Number(target.value);
+    paths[index].robotWidth = isNaN(v) ? robotWidth : v;
+    paths = paths;
+  }
+
+  function updatePathRobotHeight(index: number, e: Event) {
+    const target = e.target as HTMLInputElement | null;
+    if (!target) return;
+    const v = Number(target.value);
+    paths[index].robotHeight = isNaN(v) ? robotHeight : v;
+    paths = paths;
+  }
+
+  // Per-path sizes are edited directly in the UI; no lock/unlock helper is required.
 
   // Convex hull algorithm (Graham scan) for collision boundary
   function computeConvexHull(points: BasePoint[]): BasePoint[] {
@@ -773,6 +801,9 @@ if (!Array.isArray(lines)) lines = [];
     $showAllCollisions: boolean,
     $collisionNextSegmentOnly: boolean
   ) {
+    // Determine the active path's stored robot size (if any) so collisions and image match
+    const activeRobotW = (paths && paths[activePathIndex] && typeof paths[activePathIndex].robotWidth === 'number') ? paths[activePathIndex].robotWidth : robotWidth;
+    const activeRobotH = (paths && paths[activePathIndex] && typeof paths[activePathIndex].robotHeight === 'number') ? paths[activePathIndex].robotHeight : robotHeight;
     // --- Begin drawing logic ---
     // Draw robot origin marker (center) during animation
     if (robotXY) {
@@ -781,7 +812,7 @@ if (!Array.isArray(lines)) lines = [];
       if ($showAllCollisions && lines.length > 0) {
         // Sample N points per segment for better coverage
         const samplesPerSegment = 20;
-        const staticColor = 'rgba(0,200,255,0.3)';
+        const staticColor = hexToRgba(get(collisionBoxColor), 0.3);
         for (let seg = 0; seg < lines.length; seg++) {
           let staticLine = lines[seg];
           let staticStartPoint = seg === 0 ? startPoint : lines[seg - 1].endPoint;
@@ -815,8 +846,9 @@ if (!Array.isArray(lines)) lines = [];
             const staticAngleRad = (-staticHeading * Math.PI) / 180;
             const staticCos = Math.cos(staticAngleRad);
             const staticSin = Math.sin(staticAngleRad);
-            const staticHalfL = robotWidth / 2;
-            const staticHalfW = robotHeight / 2;
+            // use active path's stored size (if present) for collision boxes so image and collisions match
+            const staticHalfL = activeRobotW / 2;
+            const staticHalfW = activeRobotH / 2;
             const staticCornersInches = [
               { x: staticRobotInchesXY.x + staticHalfL * staticCos - (-staticHalfW) * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + (-staticHalfW) * staticCos },
               { x: staticRobotInchesXY.x + staticHalfL * staticCos - staticHalfW * staticSin, y: staticRobotInchesXY.y + staticHalfL * staticSin + staticHalfW * staticCos },
@@ -827,7 +859,7 @@ if (!Array.isArray(lines)) lines = [];
               const staticA = staticCornersInches[j];
               const staticB = staticCornersInches[(j + 1) % staticCornersInches.length];
               const staticEdge = new Two.Line(x(staticA.x), y(staticA.y), x(staticB.x), y(staticB.y));
-              staticEdge.stroke = 'rgba(0,200,255,0.7)';
+              staticEdge.stroke = hexToRgba(get(collisionBoxColor), 0.7);
               staticEdge.linewidth = x(0.18);
               staticEdge.id = `collider-all-${seg}-${i}-${j}`;
               twoInstance.add(staticEdge);
@@ -875,8 +907,8 @@ if (!Array.isArray(lines)) lines = [];
           const segAngleRad = (-segHeading * Math.PI) / 180;
           const segCos = Math.cos(segAngleRad);
           const segSin = Math.sin(segAngleRad);
-          const segHalfL = robotWidth / 2;
-          const segHalfW = robotHeight / 2;
+          const segHalfL = activeRobotW / 2;
+          const segHalfW = activeRobotH / 2;
           const segCornersInches = [
             { x: segRobotInchesXY.x + segHalfL * segCos - (-segHalfW) * segSin, y: segRobotInchesXY.y + segHalfL * segSin + (-segHalfW) * segCos },
             { x: segRobotInchesXY.x + segHalfL * segCos - segHalfW * segSin, y: segRobotInchesXY.y + segHalfL * segSin + segHalfW * segCos },
@@ -887,7 +919,7 @@ if (!Array.isArray(lines)) lines = [];
             const segA = segCornersInches[j];
             const segB = segCornersInches[(j + 1) % segCornersInches.length];
             const segEdge = new Two.Line(x(segA.x), y(segA.y), x(segB.x), y(segB.y));
-            segEdge.stroke = 'rgba(255,0,0,0.7)';
+            segEdge.stroke = hexToRgba(get(robotCollisionColor), 0.7);
             segEdge.linewidth = x(0.18);
             segEdge.id = `collider-current-${currentLineIdx}-${i}-${j}`;
             twoInstance.add(segEdge);
@@ -898,8 +930,8 @@ if (!Array.isArray(lines)) lines = [];
       const angleRad = (-robotHeading * Math.PI) / 180;
       const cos = Math.cos(angleRad);
       const sin = Math.sin(angleRad);
-      const halfL = robotWidth / 2;
-      const halfW = robotHeight / 2;
+      const halfL = activeRobotW / 2;
+      const halfW = activeRobotH / 2;
       // Robot center in inches
       const robotInchesXY = { x: x.invert(robotXY.x), y: y.invert(robotXY.y) };
       // Rectangle corners (front-left, front-right, back-right, back-left) in inches
@@ -914,7 +946,7 @@ if (!Array.isArray(lines)) lines = [];
         // Draw lines from origin to each corner (convert both to pixels)
         cornersInches.forEach((corner, idx) => {
           const line = new Two.Line(robotXY.x, robotXY.y, x(corner.x), y(corner.y));
-          line.stroke = '#ff00ff';
+          line.stroke = get(robotCollisionColor);
           line.linewidth = x(0.15);
           line.id = `origin-to-corner-${idx}`;
           twoInstance.add(line);
@@ -927,7 +959,7 @@ if (!Array.isArray(lines)) lines = [];
           const a = cornersInches[i];
           const b = cornersInches[(i + 1) % cornersInches.length];
           const edge = new Two.Line(x(a.x), y(a.y), x(b.x), y(b.y));
-          edge.stroke = '#00ffff';
+          edge.stroke = get(collisionBoxColor);
           edge.linewidth = x(0.18);
           edge.id = `collider-edge-${i}`;
           twoInstance.add(edge);
@@ -938,7 +970,7 @@ if (!Array.isArray(lines)) lines = [];
       if (get(showRobotCollisionOverlays)) {
         cornersInches.forEach((corner, idx) => {
           const line = new Two.Line(robotXY.x, robotXY.y, x(corner.x), y(corner.y));
-          line.stroke = '#ff00ff';
+          line.stroke = get(robotCollisionColor);
           line.linewidth = x(0.15);
           line.id = `origin-to-corner-legacy-${idx}`;
           twoInstance.add(line);
@@ -947,19 +979,19 @@ if (!Array.isArray(lines)) lines = [];
           const a = cornersInches[i];
           const b = cornersInches[(i + 1) % cornersInches.length];
           const edge = new Two.Line(x(a.x), y(a.y), x(b.x), y(b.y));
-          edge.stroke = '#00ffff';
+          edge.stroke = get(collisionBoxColor);
           edge.linewidth = x(0.18);
           edge.id = `collider-edge-legacy-${i}`;
           twoInstance.add(edge);
         }
       }
       const originDot = new Two.Circle(robotXY.x, robotXY.y, x(0.7));
-      originDot.fill = '#00ff00';
+      originDot.fill = get(robotCollisionColor);
       originDot.noStroke();
       originDot.id = 'robot-origin-dot';
       twoInstance.add(originDot);
       // Draw facing direction arrow (always visible)
-      const arrowLength = x(robotWidth * 0.9);
+      const arrowLength = x(activeRobotW * 0.9);
       const arrowAngleRad = (robotHeading * Math.PI) / 180;
       const arrowEndX = robotXY.x + Math.cos(arrowAngleRad) * arrowLength;
       const arrowEndY = robotXY.y + Math.sin(arrowAngleRad) * arrowLength;
@@ -994,7 +1026,7 @@ if (!Array.isArray(lines)) lines = [];
           robotXY.y - x(1.5),
           x(2.5)
         );
-        originLabel.fill = '#00ff00';
+        originLabel.fill = get(robotCollisionColor);
         originLabel.size = x(1.2);
         originLabel.noStroke();
         originLabel.id = 'robot-origin-label';
@@ -1118,7 +1150,7 @@ if (!Array.isArray(lines)) lines = [];
                 const staticA = staticCornersInches[j];
                 const staticB = staticCornersInches[(j + 1) % staticCornersInches.length];
                 const staticEdge = new Two.Line(x(staticA.x), y(staticA.y), x(staticB.x), y(staticB.y));
-                staticEdge.stroke = 'rgba(0,200,255,0.35)';
+                staticEdge.stroke = hexToRgba(get(collisionBoxColor), 0.35);
                 staticEdge.linewidth = x(0.18);
                 staticEdge.id = `ghost-collider-all-${seg}-${i}-${j}-${pidx}`;
                 twoInstance.add(staticEdge);
@@ -1177,7 +1209,7 @@ if (!Array.isArray(lines)) lines = [];
               const segA = segCornersInches[j];
               const segB = segCornersInches[(j + 1) % segCornersInches.length];
               const segEdge = new Two.Line(x(segA.x), y(segA.y), x(segB.x), y(segB.y));
-              segEdge.stroke = 'rgba(255,0,0,0.35)';
+              segEdge.stroke = hexToRgba(get(robotCollisionColor), 0.35);
               segEdge.linewidth = x(0.18);
               segEdge.id = `ghost-collider-current-${currentLineIdx}-${i}-${j}-${pidx}`;
               twoInstance.add(segEdge);
@@ -2474,6 +2506,28 @@ $: canRedo = redoStack.length > 0;
                     value={p.color}
                     on:input={(e) => { e.stopPropagation(); changePathColorFromEvent(idx, e); }}
                   />
+                  <div class="flex items-center gap-1">
+                    <input
+                      type="number"
+                      title="Robot width (inches)"
+                      min="8"
+                      max="36"
+                      step="0.5"
+                      value={p.robotWidth ?? robotWidth}
+                      on:input={(e) => { e.stopPropagation(); updatePathRobotWidth(idx, e); }}
+                      class="w-16 rounded-md pl-1.5 bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none text-sm"
+                    />
+                    <input
+                      type="number"
+                      title="Robot height (inches)"
+                      min="8"
+                      max="36"
+                      step="0.5"
+                      value={p.robotHeight ?? robotHeight}
+                      on:input={(e) => { e.stopPropagation(); updatePathRobotHeight(idx, e); }}
+                      class="w-16 rounded-md pl-1.5 bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none text-sm"
+                    />
+                  </div>
                   <button title="Delete" class="px-2 text-red-500" on:click={(e) => { e.stopPropagation(); deletePath(idx); }}>🗑</button>
                 </div>
               {/each}
