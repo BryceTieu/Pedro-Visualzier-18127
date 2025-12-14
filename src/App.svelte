@@ -125,7 +125,9 @@ function addNewPath() {
   let fieldContainer: HTMLDivElement;
 
   let pointRadius = 1.15;
-  let lineWidth = 0.57;
+  // Reduce displayed path segment thickness by 25% (user request)
+  // Original base was 0.57, apply 0.75 multiplier to make lines 25% thinner.
+  let lineWidth = 0.57 * 0.75;
   let robotWidth = 16;
   let robotHeight = 16;
   let settings: FPASettings = {
@@ -148,6 +150,26 @@ function addNewPath() {
     const g = (bigint >> 8) & 255;
     const b = bigint & 255;
     return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  // Compute a path's natural duration (ms) using the same formula used elsewhere
+  function computePathDurationMs(pd: RobotPath) {
+    const totalWait = (pd.lines || []).reduce((s, l) => s + (l.waitTime || 0), 0);
+    const baseMovement = (100 * (pd.lines ? pd.lines.length : 0)) / 0.065;
+    return baseMovement + (totalWait * 1000);
+  }
+
+  // Given a global playbar percent (0-100), compute the robotPercent (0-100) for a specific path
+  function computePathRobotPercentForGlobalPercent(pd: RobotPath, globalPercent: number) {
+    if (!pd || !pd.lines || pd.lines.length === 0) return 100;
+    const pathDurationMs = computePathDurationMs(pd);
+    const maxPathDurMs = Math.max(...paths.map((pp) => computePathDurationMs(pp)));
+    const targetDurationMs = Math.min(maxPathDurMs, 30000);
+    const globalElapsedMs = (globalPercent / 100) * targetDurationMs;
+    const elapsedForPathMs = Math.min(globalElapsedMs, pathDurationMs);
+    const playbarPercentForPath = pathDurationMs > 0 ? (elapsedForPathMs / pathDurationMs) * 100 : 100;
+    const { robotPercent } = getRobotPercentAndWait(playbarPercentForPath, pd.lines);
+    return robotPercent;
   }
 
   /**
@@ -801,6 +823,12 @@ if (!Array.isArray(lines)) lines = [];
     $showAllCollisions: boolean,
     $collisionNextSegmentOnly: boolean
   ) {
+    // Helper: compute a path's total duration in ms using existing motion timing
+    const computePathDurationMs = (pd: RobotPath) => {
+      const totalWait = (pd.lines || []).reduce((s, l) => s + (l.waitTime || 0), 0);
+      const baseMovement = (100 * (pd.lines ? pd.lines.length : 0)) / 0.065; // same formula used elsewhere
+      return baseMovement + (totalWait * 1000);
+    };
     // Determine the active path's stored robot size (if any) so collisions and image match
     const activeRobotW = (paths && paths[activePathIndex] && typeof paths[activePathIndex].robotWidth === 'number') ? paths[activePathIndex].robotWidth : robotWidth;
     const activeRobotH = (paths && paths[activePathIndex] && typeof paths[activePathIndex].robotHeight === 'number') ? paths[activePathIndex].robotHeight : robotHeight;
@@ -1081,6 +1109,14 @@ if (!Array.isArray(lines)) lines = [];
       paths.forEach((pd, pidx) => {
         if (!pd.visible) return;
         if (pidx === activePathIndex) return;
+        // compute per-path timing: pathDuration and playbarPercent mapping
+        const pathDurationMs = computePathDurationMs(pd);
+        const maxPathDurMs = Math.max(...paths.map((pp) => computePathDurationMs(pp)));
+        const targetDurationMs = Math.min(maxPathDurMs, 30000);
+        const globalElapsedMs = (percentArg / 100) * targetDurationMs;
+        const elapsedForPathMs = Math.min(globalElapsedMs, pathDurationMs);
+        const playbarPercentForPath = pathDurationMs > 0 ? (elapsedForPathMs / pathDurationMs) * 100 : 100;
+        const { robotPercent: pathRobotPercent } = getRobotPercentAndWait(playbarPercentForPath, pd.lines);
         drawPathLines(pd, pidx, { active: false });
         // small markers for context
         let sp = new Two.Circle(x(pd.startPoint.x), y(pd.startPoint.y), x(pointRadius * 0.8));
@@ -1161,7 +1197,7 @@ if (!Array.isArray(lines)) lines = [];
 
         // Collision overlays for ghost path (current segment only)
         if (get(collisionNextSegmentOnly) && pd.lines.length > 0) {
-          const effectivePercent = Math.min(typeof robotPercentArg !== 'undefined' ? robotPercentArg : percentArg, 99.999999999);
+          const effectivePercent = Math.min(pathRobotPercent, 99.999999999);
           let totalLineProgress = (pd.lines.length * effectivePercent) / 100;
           let currentLineIdx = Math.min(Math.trunc(totalLineProgress), pd.lines.length - 1);
           let currentLine = pd.lines[currentLineIdx];
@@ -1218,7 +1254,7 @@ if (!Array.isArray(lines)) lines = [];
         }
         // Draw a directional arrow for the ghost robot (shows facing)
         try {
-          const otherPos = getPathRobotPosition(pd, robotPercentArg);
+          const otherPos = getPathRobotPosition(pd, pathRobotPercent);
           if (Number.isFinite(otherPos.x) && Number.isFinite(otherPos.y)) {
             const ghostRobotW = pd.robotWidth ?? robotWidth;
             const arrowLength = x(ghostRobotW * 0.9);
@@ -2449,7 +2485,7 @@ $: canRedo = redoStack.length > 0;
         {#if comparisonMode}
           {#each paths as otherPath, idx}
                 {#if idx !== activePathIndex && otherPath.visible}
-                  {@const otherRobot = getPathRobotPosition(otherPath, robotPercent)}
+                  {@const otherRobot = getPathRobotPosition(otherPath, computePathRobotPercentForGlobalPercent(otherPath, percent))}
                   {#if Number.isFinite(otherRobot.x) && Number.isFinite(otherRobot.y)}
                     <div
                       class="absolute pointer-events-none"
