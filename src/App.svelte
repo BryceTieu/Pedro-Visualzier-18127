@@ -2544,7 +2544,18 @@ $: canRedo = redoStack.length > 0;
           {#if showPathsManager}
             <div class="p-3 bg-neutral-50 dark:bg-neutral-900 rounded-md shadow-sm">
               {#each paths as p, idx}
-                <div class={`paths-row ${idx === activePathIndex ? 'selected' : ''} mb-2`} on:click={() => setActivePath(idx)}>
+                <div
+                  class={`paths-row ${idx === activePathIndex ? 'selected' : ''} mb-2`}
+                  role="button"
+                  tabindex="0"
+                  on:click={() => setActivePath(idx)}
+                  on:keydown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setActivePath(idx);
+                    }
+                  }}
+                >
                   <div class="idx-btn" style={`background:${p.color};`} aria-hidden>{idx + 1}</div>
                   <div class="flex-1 text-sm truncate">{p.name}</div>
                   <input title="Toggle Visible" type="checkbox" checked={p.visible} on:change={(e) => { e.stopPropagation(); togglePathVisibility(idx); }} />

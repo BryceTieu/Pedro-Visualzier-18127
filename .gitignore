@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 .vercel
 ws_client.html
+
+# Local environment variables
+.env
