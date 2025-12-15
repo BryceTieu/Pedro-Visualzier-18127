@@ -83,8 +83,16 @@ function addNewPath() {
     id: `path-${Date.now()}`,
     name: `Path ${paths.length + 1}`,
     color: newColor,
-    startPoint: { ...deepClone(startPoint), color: newColor },
-    lines: deepClone(lines).map((l: Line) => ({ ...l, color: l.color ?? newColor })),
+    // Create a blank default path (do NOT clone the previous path)
+    // Provide one minimal line so the path has at least one segment (prevents division by zero)
+    startPoint: { x: 56, y: 8, heading: "linear", startDeg: 90, endDeg: 180, color: newColor },
+    lines: [
+      {
+        endPoint: { x: 56, y: 36, heading: "linear", startDeg: 90, endDeg: 180 },
+        controlPoints: [],
+        color: newColor,
+      },
+    ],
     robotWidth: robotWidth,
     robotHeight: robotHeight,
     visible: true,
@@ -152,24 +160,25 @@ function addNewPath() {
     return `rgba(${r},${g},${b},${alpha})`;
   }
 
-  // Compute a path's natural duration (ms) using the same formula used elsewhere
+  // Compute a path's natural duration (movement + waits) in ms using existing motion formula
   function computePathDurationMs(pd: RobotPath) {
     const totalWait = (pd.lines || []).reduce((s, l) => s + (l.waitTime || 0), 0);
-    const baseMovement = (100 * (pd.lines ? pd.lines.length : 0)) / 0.065;
+    const baseMovement = (100 * ((pd.lines || []).length)) / 0.065;
     return baseMovement + (totalWait * 1000);
   }
 
   // Given a global playbar percent (0-100), compute the robotPercent (0-100) for a specific path
-  function computePathRobotPercentForGlobalPercent(pd: RobotPath, globalPercent: number) {
-    if (!pd || !pd.lines || pd.lines.length === 0) return 100;
+  // This maps the global timeline to a per-path playbar that never stretches the path motion,
+  // and then uses the existing getRobotPercentAndWait() to produce the robotPercent used by motion logic.
+  function computePathRobotPercentForGlobal(pd: RobotPath, globalPlaybarPercent: number) {
     const pathDurationMs = computePathDurationMs(pd);
     const maxPathDurMs = Math.max(...paths.map((pp) => computePathDurationMs(pp)));
     const targetDurationMs = Math.min(maxPathDurMs, 30000);
-    const globalElapsedMs = (globalPercent / 100) * targetDurationMs;
+    const globalElapsedMs = (globalPlaybarPercent / 100) * targetDurationMs;
     const elapsedForPathMs = Math.min(globalElapsedMs, pathDurationMs);
     const playbarPercentForPath = pathDurationMs > 0 ? (elapsedForPathMs / pathDurationMs) * 100 : 100;
-    const { robotPercent } = getRobotPercentAndWait(playbarPercentForPath, pd.lines);
-    return robotPercent;
+    const { robotPercent: rp } = getRobotPercentAndWait(playbarPercentForPath, pd.lines || []);
+    return rp;
   }
 
   /**
@@ -823,12 +832,7 @@ if (!Array.isArray(lines)) lines = [];
     $showAllCollisions: boolean,
     $collisionNextSegmentOnly: boolean
   ) {
-    // Helper: compute a path's total duration in ms using existing motion timing
-    const computePathDurationMs = (pd: RobotPath) => {
-      const totalWait = (pd.lines || []).reduce((s, l) => s + (l.waitTime || 0), 0);
-      const baseMovement = (100 * (pd.lines ? pd.lines.length : 0)) / 0.065; // same formula used elsewhere
-      return baseMovement + (totalWait * 1000);
-    };
+    // computePathDurationMs is defined at top-level; use that to keep logic consistent
     // Determine the active path's stored robot size (if any) so collisions and image match
     const activeRobotW = (paths && paths[activePathIndex] && typeof paths[activePathIndex].robotWidth === 'number') ? paths[activePathIndex].robotWidth : robotWidth;
     const activeRobotH = (paths && paths[activePathIndex] && typeof paths[activePathIndex].robotHeight === 'number') ? paths[activePathIndex].robotHeight : robotHeight;
@@ -1400,9 +1404,18 @@ if (!Array.isArray(lines)) lines = [];
     if (previousTime !== null) {
       const deltaTime = timestamp - previousTime;
       const robotPercentIncrement = (0.65 / lines.length) * (deltaTime * 0.1) * playbackSpeed;
-      // Scale percent increment based on whether we're moving or waiting
-      const percentIncrementForMovement = robotPercentIncrement * movementRatio;
-      const percentIncrementForWait = (deltaTime / totalTimeMs) * 100 * playbackSpeed;
+      // When in comparison mode, advance the global percent uniformly over the target duration
+      let percentIncrementForMovement = robotPercentIncrement * movementRatio;
+      let percentIncrementForWait = (deltaTime / totalTimeMs) * 100 * playbackSpeed;
+      if (comparisonMode) {
+        // Compute targetDurationMs = min(max(pathDurations), 30s)
+        const allDurations = paths.map((p) => computePathDurationMs(p));
+        const maxPathDurMs = allDurations.length > 0 ? Math.max(...allDurations) : totalTimeMs;
+        const targetDurationMs = Math.min(maxPathDurMs, 30000);
+        percentIncrementForMovement = (deltaTime / targetDurationMs) * 100 * playbackSpeed;
+        // During compare mode we don't treat waits separately for the global percent — the targetDurationMs already includes waits per-path
+        percentIncrementForWait = (deltaTime / targetDurationMs) * 100 * playbackSpeed;
+      }
 
       // Only reset when robot has actually finished the entire path (including final wait)
       const robotFinished = robotPercent >= 99.999 && waitingUntil === null;
@@ -2485,7 +2498,7 @@ $: canRedo = redoStack.length > 0;
         {#if comparisonMode}
           {#each paths as otherPath, idx}
                 {#if idx !== activePathIndex && otherPath.visible}
-                  {@const otherRobot = getPathRobotPosition(otherPath, computePathRobotPercentForGlobalPercent(otherPath, percent))}
+                  {@const otherRobot = getPathRobotPosition(otherPath, computePathRobotPercentForGlobal(otherPath, percent))}
                   {#if Number.isFinite(otherRobot.x) && Number.isFinite(otherRobot.y)}
                     <div
                       class="absolute pointer-events-none"
