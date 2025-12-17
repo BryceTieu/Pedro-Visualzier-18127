@@ -4,7 +4,8 @@
 
 export function initAnalytics() {
   try {
-    const gaId = (import.meta as any).env?.VITE_GA_ID;
+    const gaId = (import.meta as any).env?.VITE_GA_ID || 'G-7V7P1D9M2J';
+    const streamId = (import.meta as any).env?.VITE_GA_STREAM_ID || '13151582216';
     if (!gaId) return;
 
     // Avoid injecting multiple times
@@ -16,10 +17,10 @@ export function initAnalytics() {
     script.setAttribute('data-ga-id', gaId);
     document.head.appendChild(script);
 
-    // Inline initialization
+    // Inline initialization — include stream id as a config parameter if available
     const inline = document.createElement('script');
     inline.setAttribute('data-ga-init', gaId);
-    inline.text = `window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', '${gaId}');`;
+    inline.text = `window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', '${gaId}', { 'stream_id': '${streamId}' });`;
     document.head.appendChild(inline);
   } catch (e) {
     // Fail silently — analytics is optional

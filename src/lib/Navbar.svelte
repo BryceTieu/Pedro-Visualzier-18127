@@ -237,6 +237,8 @@
     // Mirror all points horizontally across the center of the field (x = 72)
     const centerX = 72;
     startPoint.x = 2 * centerX - startPoint.x;
+    // Clamp after mirroring
+    startPoint.x = Math.max(1, Math.min(143, startPoint.x));
     if (typeof startPoint.heading === 'number') {
       startPoint.heading = 180 - startPoint.heading;
     }
@@ -269,6 +271,8 @@
     // Mirror all points vertically across the center of the field (y = 72)
     const centerY = 72;
     startPoint.y = 2 * centerY - startPoint.y;
+    // Clamp after mirroring
+    startPoint.y = Math.max(3, Math.min(143, startPoint.y));
     if (typeof startPoint.heading === 'number') {
       startPoint.heading = -startPoint.heading;
     }

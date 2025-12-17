@@ -177,3 +177,5 @@ Maintainers
 - FTC Team 18127 — All Hands on Tech
 
 --
+
+If you'd like a shorter README or targeted documentation (developer setup, GIF export internals, analytics opt-in flow, or a changelog), tell me which section to expand and I'll add it.

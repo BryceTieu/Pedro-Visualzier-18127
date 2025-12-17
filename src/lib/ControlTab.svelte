@@ -43,6 +43,41 @@
   export let settings: FPASettings;
 
   import { getRobotPercentAndWait } from '../utils';
+  // Input handlers to avoid inline TypeScript casts in templates
+  function handleStartPointXInput(e: Event) {
+    const t = e.target as HTMLInputElement | null;
+    if (!t) return;
+    startPoint.x = Number(t.value);
+  }
+  function handleStartPointYInput(e: Event) {
+    const t = e.target as HTMLInputElement | null;
+    if (!t) return;
+    startPoint.y = Number(t.value);
+  }
+  function handleLineEndXInput(e: Event, lineIdx: number) {
+    const t = e.target as HTMLInputElement | null;
+    if (!t) return;
+    lines[lineIdx].endPoint.x = Number(t.value);
+    lines = lines;
+  }
+  function handleLineEndYInput(e: Event, lineIdx: number) {
+    const t = e.target as HTMLInputElement | null;
+    if (!t) return;
+    lines[lineIdx].endPoint.y = Number(t.value);
+    lines = lines;
+  }
+  function handleControlPointXInput(e: Event, lineIdx: number, ptIdx: number) {
+    const t = e.target as HTMLInputElement | null;
+    if (!t) return;
+    lines[lineIdx].controlPoints[ptIdx].x = Number(t.value);
+    lines = lines;
+  }
+  function handleControlPointYInput(e: Event, lineIdx: number, ptIdx: number) {
+    const t = e.target as HTMLInputElement | null;
+    if (!t) return;
+    lines[lineIdx].controlPoints[ptIdx].y = Number(t.value);
+    lines = lines;
+  }
   // Precompute playbar percent for each segment end, accounting for waits
   $: markerPercents = lines.map((line, idx) => {
     let lo = 0, hi = 100, target = ((idx+1)/lines.length)*100, found = 100;
@@ -127,20 +162,24 @@
         <div class="font-extralight">X:</div>
         <input
           bind:value={startPoint.x}
-          min="0"
-          max="144"
+          min="1"
+          max="143"
           type="number"
           class="pl-1.5 rounded-md bg-neutral-100 border-[0.5px] focus:outline-none w-28 dark:bg-neutral-950 dark:border-neutral-700"
           step="0.1"
+          on:input={(e) => handleStartPointXInput(e)}
+          on:change={() => { startPoint.x = Math.max(1, Math.min(143, Number(startPoint.x))); }}
         />
         <div class="font-extralight">Y:</div>
         <input
           bind:value={startPoint.y}
-          min="0"
-          max="144"
+          min="3"
+          max="143"
           type="number"
           class="pl-1.5 rounded-md bg-neutral-100 border-[0.5px] focus:outline-none w-28 dark:bg-neutral-950 dark:border-neutral-700"
           step="0.1"
+          on:input={(e) => handleStartPointYInput(e)}
+          on:change={() => { startPoint.y = Math.max(3, Math.min(143, Number(startPoint.y))); }}
         />
       </div>
     </div>
@@ -170,7 +209,7 @@
           <div class="flex flex-row justify-end items-center gap-1">
             <button
               title="Add Control Point"
-              on:click={() => {
+                on:click={() => {
                 line.controlPoints = [
                   ...line.controlPoints,
                   {
@@ -204,10 +243,10 @@
                 // and ends at a point between current end and next line's end (or random if last)
                 const newEndX = idx < lines.length - 1 
                   ? (currentEnd.x + lines[idx + 1].endPoint.x) / 2 
-                  : _.random(0, 144);
+                  : _.random(1, 143);
                 const newEndY = idx < lines.length - 1 
                   ? (currentEnd.y + lines[idx + 1].endPoint.y) / 2 
-                  : _.random(0, 144);
+                  : _.random(3, 143);
 
 
                 // Prefill angles from previous endpoint
@@ -284,18 +323,22 @@
               class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-28"
               step="0.1"
               type="number"
-              min="0"
-              max="144"
+              min="1"
+              max="143"
               bind:value={line.endPoint.x}
+              on:input={(e) => handleLineEndXInput(e, idx)}
+              on:change={() => { line.endPoint.x = Math.max(1, Math.min(143, Number(line.endPoint.x))); }}
             />
             <div class="font-extralight">Y:</div>
             <input
               class="pl-1.5 rounded-md bg-neutral-100 dark:bg-neutral-950 dark:border-neutral-700 border-[0.5px] focus:outline-none w-28"
               step="0.1"
-              min="0"
-              max="144"
+              min="3"
+              max="143"
               type="number"
               bind:value={line.endPoint.y}
+              on:input={(e) => handleLineEndYInput(e, idx)}
+              on:change={() => { line.endPoint.y = Math.max(3, Math.min(143, Number(line.endPoint.y))); }}
             />
 
             <input
@@ -377,8 +420,10 @@ With tangential heading, the heading follows the direction of the line."
                 step="0.1"
                 type="number"
                 bind:value={point.x}
-                min="0"
-                max="144"
+                min="1"
+                max="143"
+                on:input={(e) => handleControlPointXInput(e, idx, idx1)}
+                on:change={() => { point.x = Math.max(1, Math.min(143, Number(point.x))); }}
               />
               <div class="font-extralight">Y:</div>
               <input
@@ -386,8 +431,10 @@ With tangential heading, the heading follows the direction of the line."
                 step="0.1"
                 type="number"
                 bind:value={point.y}
-                min="0"
-                max="144"
+                min="3"
+                max="143"
+                on:input={(e) => handleControlPointYInput(e, idx, idx1)}
+                on:change={() => { point.y = Math.max(3, Math.min(143, Number(point.y))); }}
               />
               <button
                 title="Remove Control Point"
@@ -430,8 +477,8 @@ With tangential heading, the heading follows the direction of the line."
           {
             name: `Path ${lines.length + 1}`,
             endPoint: {
-              x: _.random(0, 144),
-              y: _.random(0, 144),
+              x: _.random(1, 143),
+              y: _.random(3, 143),
               heading: "tangential",
               reverse: false,
             },

@@ -62,8 +62,10 @@ function loadActivePathToLegacy() {
 
   // Load the path into the editing (legacy) variables
   startPoint = deepClone(p.startPoint);
-  // Do not modify the editor robot size when loading a path; path sizes are stored per-path
   lines = deepClone(p.lines).map((l: Line) => ({ ...l, color: l.color ?? p.color }));
+  // Sanitize loaded data to ensure coordinates are within bounds
+  sanitizePoint(startPoint);
+  sanitizeLines(lines);
 }
 
 function syncPathFromLegacy() {
@@ -71,9 +73,14 @@ function syncPathFromLegacy() {
   if (!paths || paths.length === 0) return;
   const idx = activePathIndex;
   if (idx < 0 || idx >= paths.length) return;
-  paths[idx].startPoint = deepClone(startPoint);
+  const sp = deepClone(startPoint);
+  const ln = deepClone(lines).map((l: Line) => ({ ...l, color: l.color ?? paths[idx].color }));
+  // Sanitize before storing
+  sanitizePoint(sp);
+  sanitizeLines(ln);
+  paths[idx].startPoint = sp;
   // Do not automatically overwrite stored per-path robot sizes here; sizes are edited in the paths manager
-  paths[idx].lines = deepClone(lines).map((l: Line) => ({ ...l, color: l.color ?? paths[idx].color }));
+  paths[idx].lines = ln;
   paths = paths; // trigger reactivity
 }
 
@@ -167,6 +174,46 @@ function addNewPath() {
     return baseMovement + (totalWait * 1000);
   }
 
+  // Helper to clamp coordinates to field bounds used by the UI
+  function clampXY(xv: number, yv: number) {
+    const cx = Math.max(1, Math.min(143, xv));
+    const cy = Math.max(3, Math.min(143, yv));
+    return { x: cx, y: cy };
+  }
+
+  // Sanitize a single point-like object (ensure numeric and clamped)
+  function sanitizePoint(pt: any) {
+    if (!pt || typeof pt !== 'object') return pt;
+    const nx = Number(pt.x);
+    const ny = Number(pt.y);
+    const clamped = clampXY(isNaN(nx) ? 1 : nx, isNaN(ny) ? 3 : ny);
+    pt.x = clamped.x;
+    pt.y = clamped.y;
+    return pt;
+  }
+
+  // Sanitize an array of lines (endPoint and controlPoints)
+  function sanitizeLines(linesArr: any[]) {
+    if (!Array.isArray(linesArr)) return [];
+    for (const ln of linesArr) {
+      if (ln && ln.endPoint) sanitizePoint(ln.endPoint);
+      if (Array.isArray(ln.controlPoints)) {
+        for (const cp of ln.controlPoints) {
+          sanitizePoint(cp);
+        }
+      }
+    }
+    return linesArr;
+  }
+
+  // Sanitize a RobotPath-like object in place
+  function sanitizePathObject(pd: any) {
+    if (!pd) return pd;
+    if (pd.startPoint) sanitizePoint(pd.startPoint);
+    if (pd.lines) sanitizeLines(pd.lines);
+    return pd;
+  }
+
   // Given a global playbar percent (0-100), compute the robotPercent (0-100) for a specific path
   // This maps the global timeline to a per-path playbar that never stretches the path motion,
   // and then uses the existing getRobotPercentAndWait() to produce the robotPercent used by motion logic.
@@ -246,6 +293,8 @@ if (!Array.isArray(lines)) lines = [];
       lines: JSON.parse(JSON.stringify(original.lines)).map((l: Line) => ({ ...l, color: newColor })),
       visible: true,
     };
+    // Sanitize duplicated path before storing
+    sanitizePathObject(newPath);
     paths = [...paths, newPath];
     activePathIndex = paths.length - 1;
     loadActivePathToLegacy();
@@ -387,6 +436,9 @@ if (!Array.isArray(lines)) lines = [];
     isUndoRedo = true;
     startPoint = deepClone(prevState.startPoint);
     lines = deepClone(prevState.lines);
+    // Sanitize restored state
+    sanitizePoint(startPoint);
+    sanitizeLines(lines);
     lastSavedState = getStateHash();
     isUndoRedo = false;
   }
@@ -408,6 +460,9 @@ if (!Array.isArray(lines)) lines = [];
     isUndoRedo = true;
     startPoint = deepClone(nextState.startPoint);
     lines = deepClone(nextState.lines);
+    // Sanitize restored state
+    sanitizePoint(startPoint);
+    sanitizeLines(lines);
     lastSavedState = getStateHash();
     isUndoRedo = false;
   }
@@ -2181,24 +2236,27 @@ if (!Array.isArray(lines)) lines = [];
 
     two.renderer.domElement.addEventListener("mousemove", (evt: MouseEvent) => {
       const elem = document.elementFromPoint(evt.clientX, evt.clientY);
-      if (isDown && currentElem) {
-        const { x: xPos, y: yPos } = getMousePos(evt, two.renderer.domElement);
-          // Handle path point dragging
-          const line = Number(currentElem.split("-")[1]) - 1;
-          const point = Number(currentElem.split("-")[2]);
+          if (isDown && currentElem) {
+            const { x: xPos, y: yPos } = getMousePos(evt, two.renderer.domElement);
+              // Handle path point dragging
+              const line = Number(currentElem.split("-")[1]) - 1;
+              const point = Number(currentElem.split("-")[2]);
 
-          if (line === -1) {
-            startPoint.x = x.invert(xPos);
-            startPoint.y = y.invert(yPos);
-          } else {
-            if (point === 0) {
-              lines[line].endPoint.x = x.invert(xPos);
-              lines[line].endPoint.y = y.invert(yPos);
-            } else {
-              lines[line].controlPoints[point - 1].x = x.invert(xPos);
-              lines[line].controlPoints[point - 1].y = y.invert(yPos);
-            }
-          }
+              if (line === -1) {
+                const p = clampXY(x.invert(xPos), y.invert(yPos));
+                startPoint.x = p.x;
+                startPoint.y = p.y;
+              } else {
+                if (point === 0) {
+                  const p = clampXY(x.invert(xPos), y.invert(yPos));
+                  lines[line].endPoint.x = p.x;
+                  lines[line].endPoint.y = p.y;
+                } else {
+                  const p = clampXY(x.invert(xPos), y.invert(yPos));
+                  lines[line].controlPoints[point - 1].x = p.x;
+                  lines[line].controlPoints[point - 1].y = p.y;
+                }
+              }
       } else {
         if (elem?.id.startsWith("point") || elem?.id.startsWith("obstacle")) {
           two.renderer.domElement.style.cursor = "pointer";
@@ -2224,15 +2282,18 @@ if (!Array.isArray(lines)) lines = [];
         const lineIdx = Number(parts[1]) - 1;
         const pointIdx = Number(parts[2]);
         if (lineIdx === -1) {
-          startPoint.x = x.invert(xPos);
-          startPoint.y = y.invert(yPos);
+          const p = clampXY(x.invert(xPos), y.invert(yPos));
+          startPoint.x = p.x;
+          startPoint.y = p.y;
         } else {
           if (pointIdx === 0) {
-            lines[lineIdx].endPoint.x = x.invert(xPos);
-            lines[lineIdx].endPoint.y = y.invert(yPos);
+            const p = clampXY(x.invert(xPos), y.invert(yPos));
+            lines[lineIdx].endPoint.x = p.x;
+            lines[lineIdx].endPoint.y = p.y;
           } else {
-            lines[lineIdx].controlPoints[pointIdx - 1].x = x.invert(xPos);
-            lines[lineIdx].controlPoints[pointIdx - 1].y = y.invert(yPos);
+            const p = clampXY(x.invert(xPos), y.invert(yPos));
+            lines[lineIdx].controlPoints[pointIdx - 1].x = p.x;
+            lines[lineIdx].controlPoints[pointIdx - 1].y = p.y;
           }
         }
       }
@@ -2243,8 +2304,9 @@ if (!Array.isArray(lines)) lines = [];
       const elem = document.elementFromPoint(evt.clientX, evt.clientY);
       if (elem?.id.startsWith("point")) return;
       const { x: xPos, y: yPos } = getMousePos(evt, two.renderer.domElement);
-      const newX = x.invert(xPos);
-      const newY = y.invert(yPos);
+      const rawX = x.invert(xPos);
+      const rawY = y.invert(yPos);
+      const { x: newX, y: newY } = clampXY(rawX, rawY);
       lines = [
         ...lines,
         {
@@ -2330,7 +2392,9 @@ if (!Array.isArray(lines)) lines = [];
             robotHeight?: number;
             shapes?: Shape[];
           } = JSON.parse(result);
-
+          // Sanitize loaded coordinates to avoid out-of-bounds values
+          sanitizePoint(jsonObj.startPoint);
+          sanitizeLines(jsonObj.lines);
           startPoint = jsonObj.startPoint;
           lines = jsonObj.lines;
           if (typeof jsonObj.robotWidth === 'number') robotWidth = jsonObj.robotWidth;
